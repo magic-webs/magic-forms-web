@@ -72,7 +72,8 @@ export const purgeWorkspace = internalMutation({
       return null;
     }
 
-    for (const table of ["members", "webhooks", "apiKeys"] as const) {
+    const scoped = ["members", "webhooks", "apiKeys", "mcpTokens"] as const;
+    for (const table of scoped) {
       const rows = await ctx.db
         .query(table)
         .withIndex("by_workspace", (q) => q.eq("workspaceId", args.workspaceId))

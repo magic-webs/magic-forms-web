@@ -13,6 +13,19 @@ export function formatWhen(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
+/** Short axis label for a daily bucket, e.g. "4 Sep". */
+export function formatDay(timestamp: number): string {
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/** Thousands-separated, so a six-figure count is readable at a glance. */
+export function formatNumber(value: number): string {
+  return value.toLocaleString();
+}
+
 export function formatDateTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString(undefined, {
     dateStyle: "medium",

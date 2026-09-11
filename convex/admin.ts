@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { Id } from "./_generated/dataModel";
+import { Doc, Id } from "./_generated/dataModel";
 import {
   action,
   internalMutation,
@@ -9,9 +9,11 @@ import {
   query,
 } from "./_generated/server";
 import { requireAdmin } from "./lib/authz";
-import { hashPassword, randomToken } from "./lib/crypto";
+import { hashPassword, randomToken, sha256 } from "./lib/crypto";
 import { userError } from "./lib/errors";
 import { uniqueSlug } from "./workspaces";
+
+const DAY = 24 * 60 * 60 * 1000;
 
 /** Platform-wide numbers for the admin console. */
 export const overview = query({
@@ -22,16 +24,95 @@ export const overview = query({
     const workspaces = await ctx.db.query("workspaces").take(1000);
     const forms = await ctx.db.query("forms").take(1000);
     const webhooks = await ctx.db.query("webhooks").take(1000);
+    const mcpTokens = await ctx.db.query("mcpTokens").take(1000);
+    const apiKeys = await ctx.db.query("apiKeys").take(1000);
+
+    const submissionCount = forms.reduce((n, f) => n + f.submissionCount, 0);
+    const viewCount = forms.reduce((n, f) => n + f.viewCount, 0);
 
     return {
       userCount: users.length,
       adminCount: users.filter((u) => u.role === "admin").length,
+      disabledUserCount: users.filter((u) => u.disabled).length,
       workspaceCount: workspaces.filter((w) => !w.archived).length,
+      archivedWorkspaceCount: workspaces.filter((w) => w.archived).length,
       formCount: forms.length,
+      draftFormCount: forms.filter((f) => f.status === "draft").length,
       publishedFormCount: forms.filter((f) => f.status === "published").length,
-      submissionCount: forms.reduce((n, f) => n + f.submissionCount, 0),
-      viewCount: forms.reduce((n, f) => n + f.viewCount, 0),
+      closedFormCount: forms.filter((f) => f.status === "closed").length,
+      submissionCount,
+      viewCount,
+      // Views are counted on the form, so this is the only conversion figure
+      // the platform can state without re-reading every submission.
+      conversionRate:
+        viewCount > 0 ? Math.round((submissionCount / viewCount) * 100) : 0,
       webhookCount: webhooks.length,
+      mcpTokenCount: mcpTokens.filter((t) => !t.revoked).length,
+      revokedMcpTokenCount: mcpTokens.filter((t) => t.revoked).length,
+      apiKeyCount: apiKeys.filter((k) => !k.revoked).length,
+    };
+  },
+});
+
+/**
+ * Daily counts for the admin console charts.
+ *
+ * `now` is an argument rather than a `Date.now()` read because queries are not
+ * rerun when the clock advances — the client passes an hour-rounded value, so
+ * the result stays cacheable and still moves forward over a long session.
+ *
+ * Signups and workspaces are bucketed from the whole (small) tables.
+ * Submissions are walked newest-first and stopped at the window edge, so a
+ * platform with years of responses still only reads the days being charted;
+ * `truncated` says the window itself was too dense to read in full.
+ */
+export const activity = query({
+  args: { now: v.number(), days: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+
+    const days = Math.min(Math.max(Math.round(args.days ?? 30), 7), 90);
+    // Bucket by whole day, ending with the day `now` falls in.
+    const end = Math.floor(args.now / DAY) * DAY + DAY;
+    const start = end - days * DAY;
+    const bucketOf = (t: number) => Math.floor((t - start) / DAY);
+
+    const signups = new Array<number>(days).fill(0);
+    const newWorkspaces = new Array<number>(days).fill(0);
+    const submissions = new Array<number>(days).fill(0);
+
+    for (const user of await ctx.db.query("users").take(1000)) {
+      const bucket = bucketOf(user._creationTime);
+      if (bucket >= 0 && bucket < days) signups[bucket] += 1;
+    }
+    for (const workspace of await ctx.db.query("workspaces").take(1000)) {
+      const bucket = bucketOf(workspace._creationTime);
+      if (bucket >= 0 && bucket < days) newWorkspaces[bucket] += 1;
+    }
+
+    const SCAN_LIMIT = 4000;
+    let scanned = 0;
+    let truncated = false;
+    for await (const submission of ctx.db.query("submissions").order("desc")) {
+      if (submission._creationTime < start) break;
+      if (scanned >= SCAN_LIMIT) {
+        truncated = true;
+        break;
+      }
+      scanned += 1;
+      const bucket = bucketOf(submission._creationTime);
+      if (bucket >= 0 && bucket < days) submissions[bucket] += 1;
+    }
+
+    return {
+      days,
+      truncated,
+      series: signups.map((_, index) => ({
+        date: start + index * DAY,
+        signups: signups[index],
+        workspaces: newWorkspaces[index],
+        submissions: submissions[index],
+      })),
     };
   },
 });
@@ -302,5 +383,99 @@ export const createWorkspaceFor = mutation({
       role: "owner",
     });
     return { workspaceId, slug };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// MCP
+//
+// Every hosted-endpoint token on the platform, in one place. A token acts as
+// the account that created it, so this list is really a list of standing
+// agent access — the thing staff most need to be able to see and cut off.
+// Revoking and deleting go through `mcpTokens:revoke` / `mcpTokens:remove`,
+// which already admit platform staff; there is no second code path here.
+// ---------------------------------------------------------------------------
+
+/** Every MCP token on the platform, newest first. */
+export const listMcpTokens = query({
+  args: {},
+  handler: async (ctx) => {
+    const admin = await requireAdmin(ctx);
+    const tokens = await ctx.db.query("mcpTokens").order("desc").take(500);
+
+    // A handful of workspaces and owners are shared across many tokens.
+    const users = new Map<Id<"users">, Doc<"users"> | null>();
+    const workspaces = new Map<
+      Id<"workspaces">,
+      Doc<"workspaces"> | null
+    >();
+
+    return await Promise.all(
+      tokens.map(async (token) => {
+        if (!users.has(token.userId)) {
+          users.set(token.userId, await ctx.db.get("users", token.userId));
+        }
+        const owner = users.get(token.userId) ?? null;
+
+        let workspace: Doc<"workspaces"> | null = null;
+        if (token.workspaceId !== undefined) {
+          if (!workspaces.has(token.workspaceId)) {
+            workspaces.set(
+              token.workspaceId,
+              await ctx.db.get("workspaces", token.workspaceId),
+            );
+          }
+          workspace = workspaces.get(token.workspaceId) ?? null;
+        }
+
+        return {
+          _id: token._id,
+          name: token.name,
+          prefix: token.prefix,
+          revoked: token.revoked,
+          lastUsedAt: token.lastUsedAt ?? null,
+          createdAt: token._creationTime,
+          ownerId: token.userId,
+          ownerName: owner?.name ?? "Deleted account",
+          ownerEmail: owner?.email ?? "",
+          /** Staff tokens carry the `admin_*` tools; ordinary ones do not. */
+          ownerIsAdmin: owner?.role === "admin",
+          ownerDisabled: owner?.disabled ?? false,
+          workspaceId: token.workspaceId ?? null,
+          workspaceName: workspace?.name ?? null,
+          /** Minted from this console, belonging to no single workspace. */
+          isPlatform: token.workspaceId === undefined,
+          isYours: token.userId === admin._id,
+        };
+      }),
+    );
+  },
+});
+
+/**
+ * Mints the caller's platform MCP endpoint — the "main" one.
+ *
+ * It differs from a workspace token only in belonging to no workspace; what it
+ * can reach comes from the caller's platform `admin` role, and Convex re-checks
+ * that role on every call underneath. The plaintext is returned exactly once.
+ */
+export const createPlatformMcpToken = action({
+  args: { name: v.optional(v.string()) },
+  returns: v.object({ token: v.string(), prefix: v.string() }),
+  handler: async (ctx, args): Promise<{ token: string; prefix: string }> => {
+    const userId: Id<"users"> = await ctx.runQuery(
+      internal.admin.assertPlatformAdmin,
+      {},
+    );
+
+    const token = "mf_mcp_" + randomToken(24);
+    const prefix = token.slice(0, 15);
+    await ctx.runMutation(internal.mcpTokens.insertToken, {
+      userId,
+      name: args.name?.trim() || "Platform agent",
+      prefix,
+      tokenHash: await sha256(token),
+    });
+    return { token, prefix };
   },
 });

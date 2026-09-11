@@ -6,10 +6,11 @@ import {
   internalMutation,
   internalQuery,
   mutation,
+  MutationCtx,
   query,
 } from "./_generated/server";
 import { mintAccessToken } from "./auth";
-import { requireUser, requireWorkspaceAccess } from "./lib/authz";
+import { requireAdmin, requireUser, requireWorkspaceAccess } from "./lib/authz";
 import { randomToken, sha256 } from "./lib/crypto";
 
 /**
@@ -65,7 +66,8 @@ export const assertMember = internalQuery({
 export const insertToken = internalMutation({
   args: {
     userId: v.id("users"),
-    workspaceId: v.id("workspaces"),
+    /** Absent for a platform token minted from the admin console. */
+    workspaceId: v.optional(v.id("workspaces")),
     name: v.string(),
     prefix: v.string(),
     tokenHash: v.string(),
@@ -110,6 +112,24 @@ export const create = action({
   },
 });
 
+/**
+ * Someone other than the token's owner needs standing to touch it: a workspace
+ * admin where the token was created, or platform staff. A platform token
+ * belongs to no workspace, so only staff qualify.
+ */
+async function requireTokenControl(
+  ctx: MutationCtx,
+  token: Doc<"mcpTokens">,
+): Promise<void> {
+  const user = await requireUser(ctx);
+  if (token.userId === user._id) return;
+  if (token.workspaceId === undefined) {
+    await requireAdmin(ctx);
+    return;
+  }
+  await requireWorkspaceAccess(ctx, token.workspaceId, "admin");
+}
+
 /** The owner of a token can always revoke it; so can a workspace admin. */
 export const revoke = mutation({
   args: { tokenId: v.id("mcpTokens") },
@@ -117,10 +137,7 @@ export const revoke = mutation({
   handler: async (ctx, args) => {
     const token = await ctx.db.get("mcpTokens", args.tokenId);
     if (!token) return null;
-    const user = await requireUser(ctx);
-    if (token.userId !== user._id) {
-      await requireWorkspaceAccess(ctx, token.workspaceId, "admin");
-    }
+    await requireTokenControl(ctx, token);
     await ctx.db.patch("mcpTokens", args.tokenId, { revoked: true });
     return null;
   },
@@ -132,10 +149,7 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const token = await ctx.db.get("mcpTokens", args.tokenId);
     if (!token) return null;
-    const user = await requireUser(ctx);
-    if (token.userId !== user._id) {
-      await requireWorkspaceAccess(ctx, token.workspaceId, "admin");
-    }
+    await requireTokenControl(ctx, token);
     await ctx.db.delete("mcpTokens", args.tokenId);
     return null;
   },

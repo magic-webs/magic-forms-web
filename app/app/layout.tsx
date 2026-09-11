@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useConvexAuth } from "convex/react";
 
+import { AdminSidebar } from "@/components/admin-sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useSession } from "@/components/providers";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -11,8 +12,13 @@ import { Spinner } from "@/components/ui/spinner";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const session = useSession();
   const { isAuthenticated, isLoading } = useConvexAuth();
+
+  // The console is about the platform, not about one company, so it gets its
+  // own sidebar rather than a section bolted onto the workspace one.
+  const inAdminConsole = pathname.startsWith("/app/admin");
 
   // Bounce to sign-in as soon as we know there is no usable session.
   React.useEffect(() => {
@@ -39,7 +45,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <SidebarProvider>
-      <AppSidebar />
+      {inAdminConsole ? <AdminSidebar /> : <AppSidebar />}
       <SidebarInset className="min-w-0">{children}</SidebarInset>
     </SidebarProvider>
   );

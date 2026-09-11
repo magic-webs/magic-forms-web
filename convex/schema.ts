@@ -261,10 +261,15 @@ export default defineSchema({
    * created it and carries exactly that account's access — `workspaceId`
    * records where it was created so it can be listed there, and does not
    * narrow what the token can reach.
+   *
+   * Platform staff can mint one from the admin console that belongs to no
+   * workspace at all, which is why `workspaceId` is optional: there is no
+   * workspace it was "created in", and its reach is the whole platform
+   * because its owner's role is.
    */
   mcpTokens: defineTable({
     userId: v.id("users"),
-    workspaceId: v.id("workspaces"),
+    workspaceId: v.optional(v.id("workspaces")),
     name: v.string(),
     /** First 12 chars, so a token can be recognised in the list. */
     prefix: v.string(),

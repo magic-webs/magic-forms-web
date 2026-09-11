@@ -106,7 +106,7 @@ derives the caller from `ctx.auth`.
 
 | Scope | Role | Can do |
 | --- | --- | --- |
-| Platform | `admin` | Sees every account and workspace; can change roles and disable accounts |
+| Platform | `admin` | Sees every account, workspace and agent token; can change roles, disable accounts, archive workspaces and revoke any MCP token |
 | Workspace | `owner` | Everything, including deleting the workspace |
 | Workspace | `admin` | Members, webhooks, API keys, forms, responses |
 | Workspace | `editor` | Builds forms, manages responses |
@@ -128,7 +128,10 @@ derives the caller from `ctx.auth`.
 | `/app/w/{workspaceId}/api` | API keys and endpoint reference |
 | `/app/w/{workspaceId}/members` | Members and roles |
 | `/app/w/{workspaceId}/settings` | Workspace settings |
-| `/app/admin` | Platform admin console |
+| `/app/admin` | Platform admin console — stats and charts |
+| `/app/admin/accounts` | Every account, with roles and enable/disable |
+| `/app/admin/workspaces` | Every workspace, with archive-and-purge |
+| `/app/admin/mcp` | Your platform MCP endpoint + every token on the platform |
 | `/w/{workspaceSlug}` | **Public** — every published form in a workspace |
 | `/f/{workspaceSlug}/{formSlug}` | **Public** — a single form |
 
@@ -183,7 +186,9 @@ who it signed in as: an account with the platform `admin` role also gets the
 
 ### Hosted endpoint
 
-Create one under **API keys → AI agents** in any workspace. You get a URL:
+Create one under **API keys → AI agents** in any workspace, or — as platform
+staff — under **Admin console → MCP**, which mints one belonging to no
+workspace at all and carrying the `admin_*` tools. You get a URL:
 
 ```
 https://forms.yourco.com/api/mcp/mf_mcp_...
@@ -198,6 +203,11 @@ Redeeming a token mints the same short-lived access token a sign-in does, so
 every call underneath still goes through `requireWorkspaceAccess`. The redeemed
 credential is cached for up to a minute, which is also the longest a revoked
 token can keep working.
+
+**Admin console → MCP** lists every token on the platform — who it acts as,
+which workspace it was created in (or "Platform" for a staff one), when it last
+called, and whether it is still live — so standing agent access can be seen and
+cut off in one place.
 
 ### Running it yourself
 
