@@ -3,8 +3,12 @@
  * Generates the RS256 keypair Magic Forms signs its access tokens with and
  * stores it on the Convex deployment.
  *
- *   node scripts/setup-auth-keys.mjs           # set up, refuse to clobber good keys
+ *   node scripts/setup-auth-keys.mjs           # dev, refuse to clobber good keys
+ *   node scripts/setup-auth-keys.mjs --prod    # production deployment
  *   node scripts/setup-auth-keys.mjs --force   # rotate (signs everyone out)
+ *
+ * Each deployment needs its own keypair — dev and prod are separate databases,
+ * so a token signed by one is meaningless to the other.
  *
  * The private key never touches the repo or your clipboard — it goes straight
  * from generation into `convex env set`.
@@ -17,6 +21,18 @@ import { fileURLToPath } from "node:url";
 
 const KEY_ID = "magic-forms-key-1";
 const force = process.argv.includes("--force");
+
+// Deployment selectors are passed straight through to the Convex CLI, so the
+// same script can target dev, prod or a named preview.
+const TARGET_FLAGS = ["--prod", "--preview-name", "--deployment-name", "--url"];
+const target = [];
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (!TARGET_FLAGS.includes(arg)) continue;
+  target.push(arg);
+  if (arg !== "--prod" && process.argv[i + 1]) target.push(process.argv[++i]);
+}
+const targetLabel = target.includes("--prod") ? "production" : target.length ? target.join(" ") : "dev";
 
 // Run the CLI's entrypoint with this same Node binary: no shell, so the base64
 // key is passed as one argv entry and can never be mangled by shell quoting.
@@ -33,7 +49,7 @@ function findConvexCli() {
 const convexCli = findConvexCli();
 
 function convex(args) {
-  return execFileSync(process.execPath, [convexCli, ...args], {
+  return execFileSync(process.execPath, [convexCli, ...args, ...target], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
   }).trim();
@@ -50,6 +66,8 @@ function readEnv(name) {
 // --- don't silently destroy a working deployment
 const existing = readEnv("JWT_PRIVATE_KEY");
 const looksValid = existing.length > 1000 && /^[A-Za-z0-9+/=]+$/.test(existing);
+
+console.log("Target deployment: " + targetLabel);
 
 if (looksValid && !force) {
   console.log("JWT_PRIVATE_KEY is already set and looks valid — nothing to do.");
@@ -94,8 +112,14 @@ if (storedKey !== pkcs8 || storedJwks !== jwks) {
   process.exit(1);
 }
 
-console.log("Signing keys installed:");
+console.log("Signing keys installed on " + targetLabel + ":");
 console.log("  JWT_PRIVATE_KEY  " + pkcs8.length + " base64 chars");
 console.log("  JWKS             " + jwks.length + " chars");
 console.log("  JWT_KID          " + KEY_ID);
-console.log("\nNext: npx convex run auth:createAdmin '{\"email\":\"you@example.com\",\"name\":\"You\",\"password\":\"a-strong-password\"}'");
+const runSuffix = target.length ? " " + target.join(" ") : "";
+console.log(
+  "\nNext, create an administrator on this deployment:\n" +
+    "  npx convex run auth:createAdmin " +
+    "'{\"email\":\"you@example.com\",\"name\":\"You\",\"password\":\"a-strong-password\"}'" +
+    runSuffix,
+);

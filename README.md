@@ -41,6 +41,51 @@ Create the platform administrator (never exposed to clients):
 npx convex run auth:createAdmin '{"email":"you@example.com","name":"Your Name","password":"a-strong-password"}'
 ```
 
+## Deploying
+
+### Convex (production)
+
+Dev and prod are separate databases with separate keys, so production needs the
+same two setup steps once:
+
+```bash
+npx convex deploy                       # push functions, schema and indexes
+node scripts/setup-auth-keys.mjs --prod # signing keys for THIS deployment
+npx convex run auth:createAdmin '{"email":"…","name":"…","password":"…"}' --prod
+```
+
+Without the keys, every sign-in on production fails with
+`Failed to execute 'atob'` — a token signed for dev is meaningless to prod.
+
+### Vercel
+
+Point the project at this directory and override the build command so Convex
+deploys in the same step and hands the build its URL:
+
+```
+Build command:  npx convex deploy --cmd 'next build' --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
+Install:        (leave as detected)
+Output:         (leave as detected)
+```
+
+Environment variables:
+
+| Name | Value | Notes |
+| --- | --- | --- |
+| `CONVEX_DEPLOY_KEY` | production deploy key | Convex dashboard → Settings → Deploy keys. This is what targets prod; keep it secret |
+| `NEXT_PUBLIC_CONVEX_SITE_URL` | `https://<deployment>.convex.site` | The `.site` domain, not `.cloud`. Nothing injects this — it backs the API endpoints shown in the UI |
+
+`NEXT_PUBLIC_CONVEX_URL` is supplied by `convex deploy --cmd`, so do not set it
+by hand. Do **not** set `CONVEX_DEPLOYMENT` on Vercel — that variable selects
+your *dev* deployment and is for local use only.
+
+Both `NEXT_PUBLIC_*` values are inlined at build time, so changing either one
+needs a redeploy, not just a restart.
+
+For preview deployments, add a *preview* deploy key instead and give each
+preview its own signing keys with
+`node scripts/setup-auth-keys.mjs --preview-name <branch>`.
+
 ## How authentication works
 
 There is no third-party auth provider. Convex is the identity provider:
