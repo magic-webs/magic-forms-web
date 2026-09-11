@@ -27,6 +27,12 @@ import {
 
 import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
+import {
+  ConditionOperator,
+  describeCondition,
+  VALUE_OPERATORS,
+  VisibilityCondition,
+} from "@/convex/lib/conditions";
 import { readError } from "@/lib/format";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { FormRenderer, FormSchema } from "@/components/form-renderer";
@@ -42,6 +48,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Card,
   CardContent,
@@ -93,6 +100,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 
 type FieldType = Doc<"fields">["type"];
+
+/** A step as `getWithSchema` returns it: the document with its fields attached. */
+type StepWithFields = Doc<"steps"> & { fields: Doc<"fields">[] };
 
 const PALETTE: { group: string; icon: typeof TextFontIcon; types: { type: FieldType; label: string }[] }[] = [
   {
@@ -258,6 +268,10 @@ export default function FormBuilderPage() {
       key={selectedField._id}
       field={selectedField}
       steps={steps.map((s) => ({ _id: s._id, title: s.title }))}
+      sources={conditionSources(steps, {
+        stepId: selectedField.stepId,
+        fieldId: selectedField._id,
+      })}
       onClose={() => setSelectedFieldId(null)}
       onDelete={async () => {
         await guard(() => removeField({ fieldId: selectedField._id }), "Field removed");
@@ -380,6 +394,13 @@ export default function FormBuilderPage() {
                             {step.description}
                           </CardDescription>
                         )}
+                        {step.condition && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {describeCondition(step.condition, (key) =>
+                              labelForKey(steps, key),
+                            )}
+                          </p>
+                        )}
                       </div>
                       {canEdit && (
                         <DropdownMenu>
@@ -442,6 +463,17 @@ export default function FormBuilderPage() {
                           <span className="truncate text-sm">{field.label}</span>
                           {field.required && (
                             <span className="shrink-0 text-xs text-destructive">*</span>
+                          )}
+                          {field.condition && (
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 text-[0.65rem]"
+                              title={describeCondition(field.condition, (key) =>
+                                labelForKey(steps, key),
+                              )}
+                            >
+                              Conditional
+                            </Badge>
                           )}
                           {!STATIC_TYPES.includes(field.type) && (
                             <code className="ml-auto hidden shrink-0 font-mono text-[0.7rem] text-muted-foreground sm:inline">
@@ -655,9 +687,18 @@ export default function FormBuilderPage() {
           {editingStep && (
             <StepDialog
               step={editingStep}
-              onSave={async (title, description) => {
+              sources={conditionSources(steps, {
+                stepId: editingStep._id,
+                fieldId: null,
+              })}
+              onSave={async (title, description, condition) => {
                 await guard(() =>
-                  updateStep({ stepId: editingStep._id, title, description }),
+                  updateStep({
+                    stepId: editingStep._id,
+                    title,
+                    description,
+                    condition,
+                  }),
                 );
                 setEditingStep(null);
               }}
@@ -700,20 +741,227 @@ export default function FormBuilderPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Visibility rules
+// ---------------------------------------------------------------------------
+
+type ConditionSource = {
+  key: string;
+  label: string;
+  options: { label: string; value: string }[];
+};
+
+const OPERATOR_LABEL: Record<ConditionOperator, string> = {
+  anyOf: "is any of",
+  noneOf: "is none of",
+  isNotEmpty: "is answered",
+  isEmpty: "is blank",
+};
+
+const OPERATORS: ConditionOperator[] = ["anyOf", "noneOf", "isNotEmpty", "isEmpty"];
+
+/**
+ * The questions a rule may test: value-carrying fields that come earlier in the
+ * form than whatever is being edited. Offering later ones would let an author
+ * write a rule that can never be true, because its answer is not in yet.
+ *
+ * `fieldId` null asks on behalf of a whole step, which can only look at steps
+ * above it; a field may also look at the questions above it on its own step.
+ */
+function conditionSources(
+  steps: StepWithFields[],
+  target: { stepId: Id<"steps">; fieldId: Id<"fields"> | null },
+): ConditionSource[] {
+  const sources: ConditionSource[] = [];
+  const take = (field: Doc<"fields">) => {
+    if (STATIC_TYPES.includes(field.type)) return;
+    sources.push({ key: field.key, label: field.label, options: field.options });
+  };
+
+  for (const step of steps) {
+    if (step._id === target.stepId) {
+      if (target.fieldId) {
+        for (const field of step.fields) {
+          if (field._id === target.fieldId) break;
+          take(field);
+        }
+      }
+      break;
+    }
+    for (const field of step.fields) take(field);
+  }
+  return sources;
+}
+
+/** Names the field a rule points at, falling back to the raw key if it is gone. */
+function labelForKey(steps: StepWithFields[], key: string): string {
+  for (const step of steps) {
+    for (const field of step.fields) {
+      if (field.key === key) return field.label;
+    }
+  }
+  return key;
+}
+
+/** Free-text values, kept as typed so a trailing comma does not fight the user. */
+function ValuesInput({
+  values,
+  onChange,
+}: {
+  values: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [text, setText] = React.useState(values.join(", "));
+  return (
+    <Input
+      value={text}
+      placeholder="value-one, value-two"
+      className="font-mono text-xs"
+      onChange={(event) => {
+        setText(event.target.value);
+        onChange(
+          event.target.value
+            .split(",")
+            .map((part) => part.trim())
+            .filter((part) => part.length > 0),
+        );
+      }}
+    />
+  );
+}
+
+function ConditionEditor({
+  subject,
+  value,
+  sources,
+  onChange,
+}: {
+  subject: "step" | "field";
+  value: VisibilityCondition | null;
+  sources: ConditionSource[];
+  onChange: (next: VisibilityCondition | null) => void;
+}) {
+  const source = sources.find((candidate) => candidate.key === value?.fieldKey);
+  const needsValues = value !== null && VALUE_OPERATORS.includes(value.operator);
+
+  if (sources.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Add a question earlier in the form to make this {subject} conditional.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <NativeSelect
+        aria-label={"When to show this " + subject}
+        value={value?.fieldKey ?? ""}
+        onChange={(event) =>
+          onChange(
+            event.target.value === ""
+              ? null
+              : { fieldKey: event.target.value, operator: "anyOf", values: [] },
+          )
+        }
+      >
+        <NativeSelectOption value="">Always show this {subject}</NativeSelectOption>
+        {sources.map((candidate) => (
+          <NativeSelectOption key={candidate.key} value={candidate.key}>
+            Only when “{candidate.label}” …
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+
+      {value && (
+        <>
+          <NativeSelect
+            aria-label="Comparison"
+            value={value.operator}
+            onChange={(event) =>
+              onChange({
+                ...value,
+                operator: event.target.value as ConditionOperator,
+              })
+            }
+          >
+            {OPERATORS.map((operator) => (
+              <NativeSelectOption key={operator} value={operator}>
+                {OPERATOR_LABEL[operator]}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+
+          {needsValues &&
+            (source && source.options.length > 0 ? (
+              <div className="flex flex-col gap-1.5">
+                {source.options.map((option) => (
+                  <Label
+                    key={option.value}
+                    className="flex min-w-0 items-center gap-2.5 rounded-lg border p-2 font-normal has-data-checked:border-primary has-data-checked:bg-primary/5"
+                  >
+                    <Checkbox
+                      checked={value.values.includes(option.value)}
+                      onCheckedChange={(checked) =>
+                        onChange({
+                          ...value,
+                          values: checked
+                            ? [...value.values, option.value]
+                            : value.values.filter((v) => v !== option.value),
+                        })
+                      }
+                    />
+                    <span className="min-w-0 truncate">{option.label}</span>
+                    <code className="ml-auto shrink-0 font-mono text-[0.65rem] text-muted-foreground">
+                      {option.value}
+                    </code>
+                  </Label>
+                ))}
+              </div>
+            ) : (
+              <ValuesInput
+                values={value.values}
+                onChange={(values) => onChange({ ...value, values })}
+              />
+            ))}
+
+          <p className="text-xs text-muted-foreground">
+            {describeCondition(
+              value,
+              (key) =>
+                sources.find((candidate) => candidate.key === key)?.label ?? key,
+            )}
+            .
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Step rename dialog
 // ---------------------------------------------------------------------------
 
 function StepDialog({
   step,
+  sources,
   onSave,
   onCancel,
 }: {
   step: Doc<"steps">;
-  onSave: (title: string, description: string) => Promise<void>;
+  sources: ConditionSource[];
+  onSave: (
+    title: string,
+    description: string,
+    condition: VisibilityCondition | null,
+  ) => Promise<void>;
   onCancel: () => void;
 }) {
   const [title, setTitle] = React.useState(step.title);
   const [description, setDescription] = React.useState(step.description ?? "");
+  const [condition, setCondition] = React.useState<VisibilityCondition | null>(
+    step.condition ?? null,
+  );
   const [saving, setSaving] = React.useState(false);
 
   return (
@@ -722,7 +970,7 @@ function StepDialog({
       onSubmit={async (event) => {
         event.preventDefault();
         setSaving(true);
-        await onSave(title, description);
+        await onSave(title, description, condition);
         setSaving(false);
       }}
     >
@@ -750,6 +998,18 @@ function StepDialog({
           onChange={(e) => setDescription(e.target.value)}
         />
       </div>
+
+      <Separator />
+      <div className="flex flex-col gap-2">
+        <Label>When to show it</Label>
+        <ConditionEditor
+          subject="step"
+          value={condition}
+          sources={sources}
+          onChange={setCondition}
+        />
+      </div>
+
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
@@ -769,11 +1029,13 @@ function StepDialog({
 function FieldInspector({
   field,
   steps,
+  sources,
   onClose,
   onDelete,
 }: {
   field: Doc<"fields">;
   steps: { _id: Id<"steps">; title: string }[];
+  sources: ConditionSource[];
   onClose: () => void;
   onDelete: () => Promise<void>;
 }) {
@@ -789,6 +1051,9 @@ function FieldInspector({
   const [width, setWidth] = React.useState(field.width);
   const [options, setOptions] = React.useState(field.options);
   const [validation, setValidation] = React.useState(field.validation);
+  const [condition, setCondition] = React.useState<VisibilityCondition | null>(
+    field.condition ?? null,
+  );
   const [saving, setSaving] = React.useState(false);
 
   const isStatic = STATIC_TYPES.includes(field.type);
@@ -814,6 +1079,7 @@ function FieldInspector({
         width,
         options: isChoice ? options : [],
         validation,
+        condition,
       });
       toast.add({ title: "Field saved" });
     } catch (caught) {
@@ -1101,6 +1367,18 @@ function FieldInspector({
             )}
           </>
         )}
+
+        {/* ---- when this field appears ---- */}
+        <Separator />
+        <div className="flex flex-col gap-2">
+          <Label>When to show it</Label>
+          <ConditionEditor
+            subject="field"
+            value={condition}
+            sources={sources}
+            onChange={setCondition}
+          />
+        </div>
 
         {/* ---- move to another step ---- */}
         {steps.length > 1 && (

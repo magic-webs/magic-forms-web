@@ -7,8 +7,14 @@ import {
   requireWorkspaceAccess,
   slugify,
 } from "./lib/authz";
+import { VALUE_OPERATORS, VisibilityCondition } from "./lib/conditions";
 import { dispatchEvent } from "./lib/events";
-import { fieldOption, fieldType, fieldValidation } from "./schema";
+import {
+  fieldOption,
+  fieldType,
+  fieldValidation,
+  visibilityCondition,
+} from "./schema";
 import { userError } from "./lib/errors";
 
 const DEFAULT_SETTINGS = {
@@ -299,11 +305,14 @@ export const duplicate = mutation({
       .take(300);
 
     for (const step of steps) {
+      // Conditions travel by field `key`, which the copy keeps, so the copied
+      // branching keeps working without any id rewriting.
       const newStepId = await ctx.db.insert("steps", {
         formId: newFormId,
         order: step.order,
         title: step.title,
         description: step.description,
+        condition: step.condition,
       });
       for (const field of fields.filter((f) => f.stepId === step._id)) {
         await ctx.db.insert("fields", {
@@ -320,6 +329,7 @@ export const duplicate = mutation({
           width: field.width,
           options: field.options,
           validation: field.validation,
+          condition: field.condition,
         });
       }
     }
@@ -350,10 +360,42 @@ export const remove = mutation({
 // Steps
 // ---------------------------------------------------------------------------
 
+/**
+ * Rejects a rule that names a field the form does not have. A typo'd key would
+ * otherwise sit there doing nothing visible until someone filled the form in.
+ */
+async function checkCondition(
+  ctx: MutationCtx,
+  formId: Id<"forms">,
+  condition: VisibilityCondition | null | undefined,
+) {
+  if (!condition) return;
+  const fields = await ctx.db
+    .query("fields")
+    .withIndex("by_form", (q) => q.eq("formId", formId))
+    .take(300);
+  if (!fields.some((field) => field.key === condition.fieldKey)) {
+    userError(
+      "No field on this form has the key '" +
+        condition.fieldKey +
+        "'. Available keys: " +
+        (fields.map((f) => f.key).join(", ") || "(none yet)") +
+        ".",
+    );
+  }
+  if (
+    VALUE_OPERATORS.includes(condition.operator) &&
+    condition.values.length === 0
+  ) {
+    userError("A '" + condition.operator + "' rule needs at least one value.");
+  }
+}
+
 export const addStep = mutation({
   args: {
     formId: v.id("forms"),
     title: v.optional(v.string()),
+    condition: v.optional(visibilityCondition),
   },
   returns: v.id("steps"),
   handler: async (ctx, args) => {
@@ -363,11 +405,13 @@ export const addStep = mutation({
       .withIndex("by_form_and_order", (q) => q.eq("formId", args.formId))
       .take(50);
     if (steps.length >= 20) userError("A form can have up to 20 steps.");
+    await checkCondition(ctx, args.formId, args.condition);
     const order = steps.reduce((max, s) => Math.max(max, s.order), -1) + 1;
     return await ctx.db.insert("steps", {
       formId: args.formId,
       order,
       title: args.title?.trim() || "Step " + (steps.length + 1),
+      condition: args.condition,
     });
   },
 });
@@ -377,18 +421,27 @@ export const updateStep = mutation({
     stepId: v.id("steps"),
     title: v.optional(v.string()),
     description: v.optional(v.string()),
+    /** `null` clears the rule, so the step is always shown again. */
+    condition: v.optional(v.union(visibilityCondition, v.null())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const step = await ctx.db.get("steps", args.stepId);
     if (!step) userError("Step not found.");
     await requireFormAccess(ctx, step.formId, "editor");
+    if (args.condition !== undefined) {
+      await checkCondition(ctx, step.formId, args.condition);
+    }
     await ctx.db.patch("steps", args.stepId, {
       title: args.title?.trim() || step.title,
       description:
         args.description === undefined
           ? step.description
           : args.description.trim() || undefined,
+      condition:
+        args.condition === undefined
+          ? step.condition
+          : (args.condition ?? undefined),
     });
     return null;
   },
@@ -542,14 +595,25 @@ export const updateField = mutation({
     ),
     options: v.optional(v.array(fieldOption)),
     validation: v.optional(fieldValidation),
+    /** `null` clears the rule, so the field is always shown again. */
+    condition: v.optional(v.union(visibilityCondition, v.null())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const field = await ctx.db.get("fields", args.fieldId);
     if (!field) userError("Field not found.");
     await requireFormAccess(ctx, field.formId, "editor");
+    if (args.condition !== undefined) {
+      if (args.condition && args.condition.fieldKey === field.key) {
+        userError("A field cannot be shown or hidden by its own answer.");
+      }
+      await checkCondition(ctx, field.formId, args.condition);
+    }
 
     const patch: Partial<Doc<"fields">> = {};
+    if (args.condition !== undefined) {
+      patch.condition = args.condition ?? undefined;
+    }
     if (args.label !== undefined) patch.label = args.label;
     if (args.key !== undefined) {
       patch.key = await uniqueFieldKey(ctx, field.formId, args.key, field._id);

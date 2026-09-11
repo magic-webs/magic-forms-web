@@ -1,4 +1,8 @@
 import { Doc } from "../_generated/dataModel";
+import { parseList } from "./conditions";
+
+// Re-exported so callers that validate and split values keep one import.
+export { parseList };
 
 /** Field types that only decorate the form and never carry a value. */
 export const STATIC_TYPES = new Set(["heading", "paragraph", "divider"]);
@@ -17,6 +21,11 @@ function isBlank(value: string | undefined): boolean {
  *
  * The same rules run for the in-app renderer and the public HTTP API, so a
  * submission can never bypass validation by going around the UI.
+ *
+ * Pass only the fields that are actually on screen for this payload — see
+ * `visibleFields` in `./conditions`. A required field on a branch the person
+ * never took must not block their submission, and its value must not be
+ * stored, which falls out of it never reaching `cleaned`.
  */
 export function validateSubmission(
   fields: Doc<"fields">[],
@@ -154,21 +163,6 @@ export function validateSubmission(
   return { issues, cleaned };
 }
 
-/** Multi-value fields arrive as a JSON array, or as a comma separated list. */
-export function parseList(raw: string | undefined): string[] {
-  if (!raw || raw.trim() === "") return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.map((x) => String(x));
-  } catch {
-    // fall through to the comma separated form
-  }
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-
 /** The shape the public API and the renderer both consume. */
 export function serialiseField(field: Doc<"fields">) {
   return {
@@ -183,5 +177,6 @@ export function serialiseField(field: Doc<"fields">) {
     width: field.width,
     options: field.options,
     validation: field.validation,
+    condition: field.condition ?? null,
   };
 }

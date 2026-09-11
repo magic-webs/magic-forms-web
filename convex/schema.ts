@@ -50,6 +50,26 @@ export const fieldValidation = v.object({
   acceptedFileTypes: v.optional(v.string()),
 });
 
+/**
+ * One visibility rule. Attached to a step or a field, it makes that part of the
+ * form appear only when another field's answer matches — the mechanism behind
+ * "pick a type, then answer that type's questions".
+ *
+ * See `lib/conditions.ts` for how a rule is evaluated.
+ */
+export const visibilityCondition = v.object({
+  /** `key` of the field whose answer is tested. */
+  fieldKey: v.string(),
+  operator: v.union(
+    v.literal("anyOf"),
+    v.literal("noneOf"),
+    v.literal("isEmpty"),
+    v.literal("isNotEmpty"),
+  ),
+  /** Compared against the answer; ignored by isEmpty / isNotEmpty. */
+  values: v.array(v.string()),
+});
+
 /** Events a webhook can subscribe to. */
 export const webhookEvent = v.union(
   v.literal("form.created"),
@@ -151,6 +171,8 @@ export default defineSchema({
     order: v.number(),
     title: v.string(),
     description: v.optional(v.string()),
+    /** Absent means the step is always shown. */
+    condition: v.optional(visibilityCondition),
   }).index("by_form_and_order", ["formId", "order"]),
 
   fields: defineTable({
@@ -168,6 +190,8 @@ export default defineSchema({
     width: v.union(v.literal("full"), v.literal("half"), v.literal("third")),
     options: v.array(fieldOption),
     validation: fieldValidation,
+    /** Absent means the field is always shown, as long as its step is. */
+    condition: v.optional(visibilityCondition),
   })
     .index("by_form", ["formId"])
     .index("by_step_and_order", ["stepId", "order"]),

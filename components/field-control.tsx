@@ -8,6 +8,7 @@ import {
   Upload01Icon,
 } from "@hugeicons/core-free-icons";
 
+import { VisibilityCondition } from "@/convex/lib/conditions";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -51,6 +52,8 @@ export type FieldDef = {
     maxFileSizeMb?: number;
     acceptedFileTypes?: string;
   };
+  /** Null means the field is always shown, as long as its step is. */
+  condition?: VisibilityCondition | null;
 };
 
 export const STATIC_FIELD_TYPES = ["heading", "paragraph", "divider"];

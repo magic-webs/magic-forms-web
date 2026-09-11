@@ -8,6 +8,7 @@
  */
 import { api } from "../api.mjs";
 import {
+  CONDITION_OPERATORS,
   FIELD_TYPES,
   FORM_STATUSES,
   arrayOf,
@@ -19,6 +20,25 @@ import {
 } from "../schema.mjs";
 
 const WIDTHS = ["full", "half", "third"];
+
+const conditionSpec = object(
+  {
+    fieldKey: string(
+      "Key of an EARLIER field whose answer decides this. It must already " +
+        "exist on the form when the rule is saved.",
+    ),
+    operator: oneOf(
+      CONDITION_OPERATORS,
+      "anyOf / noneOf compare the answer against values; isEmpty / isNotEmpty " +
+        "only test whether it was answered.",
+    ),
+    values: arrayOf(
+      string("A stored option value, not its label."),
+      "Values to compare against. Required by anyOf and noneOf.",
+    ),
+  },
+  ["fieldKey", "operator", "values"],
+);
 
 const validationSpec = object({
   min: number("Smallest accepted number, or slider minimum."),
@@ -55,6 +75,7 @@ const fieldSpec = object(
       "Choices for select, multiselect, radio and checkboxGroup.",
     ),
     validation: validationSpec,
+    condition: conditionSpec,
   },
   ["type"],
 );
@@ -64,6 +85,7 @@ const stepSpec = object(
     title: string("Step heading."),
     description: string("Step subheading."),
     fields: arrayOf(fieldSpec, "Fields on this step, in order."),
+    condition: conditionSpec,
   },
   ["fields"],
 );
@@ -91,6 +113,7 @@ async function applyFieldDetails(session, fieldId, spec) {
     "width",
     "options",
     "validation",
+    "condition",
   ]) {
     if (spec[key] !== undefined) patch[key] = spec[key];
   }
@@ -115,6 +138,7 @@ async function describeForm(session, formId) {
       stepId: step._id,
       title: step.title,
       description: step.description ?? null,
+      condition: step.condition ?? null,
       fields: step.fields.map((field) => ({
         fieldId: field._id,
         key: field.key,
@@ -127,6 +151,7 @@ async function describeForm(session, formId) {
         width: field.width,
         options: field.options,
         validation: field.validation,
+        condition: field.condition ?? null,
       })),
     })),
   };
@@ -138,9 +163,16 @@ export const formTools = [
     scope: "company",
     description:
       "Creates a complete form in one call — steps, fields, options, " +
-      "validation and settings — and optionally publishes it. This is the " +
-      "fastest way to turn a description of a form into a working public URL. " +
-      "Use add_field or update_field afterwards to adjust it.",
+      "validation, branching and settings — and optionally publishes it. This " +
+      "is the fastest way to turn a description of a form into a working " +
+      "public URL. Use add_field or update_field afterwards to adjust it.\n\n" +
+      "Branching: give a step or a field a `condition` and it is shown only " +
+      "when an earlier answer matches. To ask for a type and then that type's " +
+      "questions, make step 1 a select/radio field (key 'type', options " +
+      "product/service/other), then give step 2 the condition " +
+      "{fieldKey:'type', operator:'anyOf', values:['product']}, step 3 the " +
+      "same for 'service', and so on. Steps nobody reaches are skipped, and " +
+      "their fields are neither required nor stored.",
     input: object(
       {
         workspaceId: string("Workspace the form belongs to."),
@@ -172,21 +204,30 @@ export const formTools = [
       const created = await session.query(api.forms.getWithSchema, { formId });
       const firstStepId = created.steps[0]?._id;
 
+      // Steps are built in order, and each step's fields before the next step
+      // begins — which is exactly what a rule needs, since it may only name a
+      // field that already exists.
       for (const [index, step] of args.steps.entries()) {
         let stepId;
         if (index === 0 && firstStepId) {
           stepId = firstStepId;
-          if (step.title !== undefined || step.description !== undefined) {
+          if (
+            step.title !== undefined ||
+            step.description !== undefined ||
+            step.condition !== undefined
+          ) {
             await session.mutation(api.forms.updateStep, {
               stepId,
               title: step.title,
               description: step.description,
+              condition: step.condition,
             });
           }
         } else {
           stepId = await session.mutation(api.forms.addStep, {
             formId,
             title: step.title,
+            condition: step.condition,
           });
           if (step.description !== undefined) {
             await session.mutation(api.forms.updateStep, {
@@ -352,14 +393,45 @@ export const formTools = [
   {
     name: "add_step",
     scope: "company",
-    description: "Appends a step to a form, making it a multi-step form.",
+    description:
+      "Appends a step to a form, making it a multi-step form. Pass a " +
+      "`condition` to show the step only when an earlier answer matches — the " +
+      "way a 'product' branch is told apart from a 'service' one.",
     input: object(
-      { formId: string("Form id."), title: string("Step heading.") },
+      {
+        formId: string("Form id."),
+        title: string("Step heading."),
+        condition: conditionSpec,
+      },
       ["formId"],
     ),
     run: async (session, args) => {
       const stepId = await session.mutation(api.forms.addStep, args);
       return { stepId };
+    },
+  },
+
+  {
+    name: "update_step",
+    scope: "company",
+    description:
+      "Changes a step's heading, description, or the rule that decides " +
+      "whether it is shown. Only what you pass is touched; pass condition " +
+      "null to make the step unconditional again.",
+    input: object(
+      {
+        stepId: string("Step id, from get_form."),
+        title: string("New heading."),
+        description: string("New subheading."),
+        condition: conditionSpec,
+      },
+      ["stepId"],
+    ),
+    run: async (session, args) => {
+      // `null` has to survive to Convex to clear the rule, so it is passed
+      // through rather than stripped with the undefined properties.
+      await session.mutation(api.forms.updateStep, args);
+      return { ok: true };
     },
   },
 
@@ -383,6 +455,7 @@ export const formTools = [
         width: oneOf(WIDTHS, "Column width on desktop."),
         options: arrayOf(optionSpec, "Choices for a choice field."),
         validation: validationSpec,
+        condition: conditionSpec,
       },
       ["stepId", "type"],
     ),
@@ -402,7 +475,9 @@ export const formTools = [
     scope: "company",
     description:
       "Changes one field. Only the properties you pass are touched. Changing " +
-      "the key changes what already-stored responses line up with.",
+      "the key changes what already-stored responses line up with, and orphans " +
+      "any rule that names the old key. Pass condition null to make the field " +
+      "unconditional again.",
     input: object(
       {
         fieldId: string("Field id, from get_form."),
@@ -415,6 +490,7 @@ export const formTools = [
         width: oneOf(WIDTHS, "Column width on desktop."),
         options: arrayOf(optionSpec, "Replacement list of choices."),
         validation: validationSpec,
+        condition: conditionSpec,
       },
       ["fieldId"],
     ),

@@ -58,6 +58,8 @@ export const FIELD_TYPES = [
   "divider",
 ];
 
+export const CONDITION_OPERATORS = ["anyOf", "noneOf", "isEmpty", "isNotEmpty"];
+
 export const WEBHOOK_EVENTS = [
   "form.created",
   "form.updated",

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, QueryCtx, MutationCtx } from "./_generated/server";
+import { visibleFields } from "./lib/conditions";
 import { dispatchEvent } from "./lib/events";
 import { serialiseField, validateSubmission } from "./lib/validate";
 
@@ -61,6 +62,9 @@ export async function buildFormSchema(
         id: step._id,
         title: step.title,
         description: step.description ?? null,
+        // The renderer needs the rules, not just the result: which steps show
+        // depends on answers it has not collected yet.
+        condition: step.condition ?? null,
         fields: fields
           .filter((f) => f.stepId === step._id)
           .sort((a, b) => a.order - b.order)
@@ -231,15 +235,28 @@ export async function submitToForm(
     .query("fields")
     .withIndex("by_form", (q) => q.eq("formId", args.form._id))
     .take(300);
+  const steps = await ctx.db
+    .query("steps")
+    .withIndex("by_form_and_order", (q) => q.eq("formId", args.form._id))
+    .take(50);
 
-  const { issues, cleaned } = validateSubmission(fields, args.data);
+  // Branches the person never saw are not theirs to answer: their fields are
+  // neither required of them nor recorded against them. Resolving this here
+  // rather than trusting the client is what stops a crafted payload smuggling
+  // in values from a branch the form's own rules ruled out.
+  const shown = visibleFields(steps, fields, args.data);
+  const shownKeys = new Set(shown.map((field) => field.key));
+
+  const { issues, cleaned } = validateSubmission(shown, args.data);
   if (issues.length > 0) return { ok: false, issues };
+
+  const files = args.files.filter((file) => shownKeys.has(file.key));
 
   const submissionId = await ctx.db.insert("submissions", {
     formId: args.form._id,
     workspaceId: args.workspace._id,
     data: cleaned,
-    files: args.files,
+    files,
     source: args.source,
     userAgent: args.userAgent,
     referrer: args.referrer,

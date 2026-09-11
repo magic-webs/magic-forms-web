@@ -12,6 +12,14 @@ import {
 
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
+// Imported, not mirrored: if the browser and the server disagreed about which
+// steps are showing, the form would offer a branch the submit path then throws
+// out. `lib/conditions` is dependency-free precisely so this import is safe.
+import {
+  isConditionMet,
+  VisibilityCondition,
+} from "@/convex/lib/conditions";
+import { cn } from "@/lib/utils";
 import {
   FieldControl,
   FieldDef,
@@ -36,6 +44,8 @@ export type StepDef = {
   id: string;
   title: string;
   description: string | null;
+  /** Null means the step is always shown. */
+  condition?: VisibilityCondition | null;
   fields: FieldDef[];
 };
 
@@ -153,14 +163,30 @@ type Props = {
   schema: FormSchema;
   /** Preview mode renders the form but never writes a submission. */
   preview?: boolean;
+  /**
+   * Fills the page instead of sitting in a card: the progress bar sticks to the
+   * top, the fields stretch over the full height, and the step buttons stay
+   * pinned to the bottom of the viewport. Used on the public form page.
+   */
+  fullScreen?: boolean;
+  /** Sits at the foot of the scrolling area in `fullScreen`, above the buttons. */
+  brand?: React.ReactNode;
 };
 
-export function FormRenderer({ schema, preview = false }: Props) {
+export function FormRenderer({
+  schema,
+  preview = false,
+  fullScreen = false,
+  brand,
+}: Props) {
   const submit = useMutation(api.publicForms.submit);
   const generateUploadUrl = useMutation(api.publicForms.generateUploadUrl);
   const recordStep = useMutation(api.publicForms.recordStepCompleted);
 
-  const [stepIndex, setStepIndex] = React.useState(0);
+  // Which step is in view is tracked by id, not by position: branching changes
+  // the positions underneath as answers come in, and an index would silently
+  // start pointing at a different step.
+  const [stepId, setStepId] = React.useState<string | null>(null);
   const [values, setValues] = React.useState<Record<string, string>>(() =>
     initialValues(schema.steps),
   );
@@ -172,7 +198,40 @@ export function FormRenderer({ schema, preview = false }: Props) {
     null,
   );
 
-  const steps = schema.steps.length > 0 ? schema.steps : [];
+  const knownKeys = React.useMemo(
+    () => new Set(schema.steps.flatMap((s) => s.fields.map((f) => f.key))),
+    [schema.steps],
+  );
+
+  /**
+   * The form as it stands for these answers. Recomputed on every keystroke, so
+   * choosing "product" reveals the product step while the choice is still on
+   * screen, and the button flips between Continue and Submit to match.
+   *
+   * A step drops out when its own rule fails, and also when every field on it
+   * is hidden — an author who branches field by field rather than step by step
+   * should not leave people on a screen with nothing to answer.
+   */
+  const steps = React.useMemo(() => {
+    const open = schema.steps
+      .filter((step) => isConditionMet(step.condition, values, knownKeys))
+      .map((step) => ({
+        ...step,
+        fields: step.fields.filter((field) =>
+          isConditionMet(field.condition, values, knownKeys),
+        ),
+      }))
+      .filter((step) => step.fields.length > 0);
+
+    // Never leave nothing to fill in: a form whose every step is conditional
+    // has to start somewhere, so the first step stands in.
+    return open.length > 0 ? open : schema.steps.slice(0, 1);
+  }, [schema.steps, values, knownKeys]);
+
+  const stepIndex = Math.max(
+    0,
+    steps.findIndex((candidate) => candidate.id === stepId),
+  );
   const step = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
   const multiStep = steps.length > 1;
@@ -205,10 +264,13 @@ export function FormRenderer({ schema, preview = false }: Props) {
       recordStep({
         workspaceSlug: schema.workspace.slug,
         formSlug: schema.form.slug,
-        stepIndex,
+        // Reported against the form's own step order, not the branch the person
+        // happens to be on, so the event means the same thing for everyone.
+        stepIndex: schema.steps.findIndex((s) => s.id === step.id),
       }).catch(() => {});
     }
-    setStepIndex((index) => Math.min(index + 1, steps.length - 1));
+    const next = steps[Math.min(stepIndex + 1, steps.length - 1)];
+    if (next) setStepId(next.id);
   }
 
   /**
@@ -241,6 +303,11 @@ export function FormRenderer({ schema, preview = false }: Props) {
     setSubmitting(true);
     setFormError(null);
     try {
+      // Only what the person was actually shown. The server re-derives this
+      // rather than trusting it, but sending a branch they never took would be
+      // wrong either way — and an upload for a hidden field is wasted work.
+      const shownKeys = new Set(steps.flatMap((s) => s.fields.map((f) => f.key)));
+
       // Upload any attachments first so the submission can reference them.
       const uploaded: {
         key: string;
@@ -249,6 +316,7 @@ export function FormRenderer({ schema, preview = false }: Props) {
         size: number;
       }[] = [];
       for (const [key, file] of Object.entries(files)) {
+        if (!shownKeys.has(key)) continue;
         const url = await generateUploadUrl({});
         const response = await fetch(url, {
           method: "POST",
@@ -264,7 +332,7 @@ export function FormRenderer({ schema, preview = false }: Props) {
 
       const payload: Record<string, string> = {};
       for (const [key, value] of Object.entries(values)) {
-        if (value !== "") payload[key] = value;
+        if (value !== "" && shownKeys.has(key)) payload[key] = value;
       }
 
       const result = await submit({
@@ -288,10 +356,10 @@ export function FormRenderer({ schema, preview = false }: Props) {
         }
         setErrors(mapped);
         // Jump back to the first step that has a problem.
-        const firstBad = steps.findIndex((candidate) =>
+        const firstBad = steps.find((candidate) =>
           candidate.fields.some((field) => field.key in mapped),
         );
-        if (firstBad >= 0) setStepIndex(firstBad);
+        if (firstBad) setStepId(firstBad.id);
         setSubmitting(false);
         return;
       }
@@ -311,66 +379,239 @@ export function FormRenderer({ schema, preview = false }: Props) {
   }
 
   // ---- success state
+  const successPanel = done && (
+    <div className="flex flex-col items-center gap-4 text-center">
+      <span className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <HugeiconsIcon
+          icon={CheckmarkCircle02Icon}
+          className="size-6"
+          strokeWidth={2}
+        />
+      </span>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">
+          {done.title}
+        </h2>
+        <p className="text-sm text-muted-foreground">{done.message}</p>
+      </div>
+      {(preview || schema.form.settings.allowMultipleSubmissions) && (
+        <Button
+          variant="outline"
+          onClick={() => {
+            setDone(null);
+            setValues(initialValues(schema.steps));
+            setFiles({});
+            setErrors({});
+            setStepId(null);
+          }}
+        >
+          Submit another response
+        </Button>
+      )}
+    </div>
+  );
+
   if (done) {
-    return (
+    return fullScreen ? (
+      <FullScreenPanel brand={brand}>{successPanel}</FullScreenPanel>
+    ) : (
       <Card className="w-full">
-        <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
-          <span className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <HugeiconsIcon
-              icon={CheckmarkCircle02Icon}
-              className="size-6"
-              strokeWidth={2}
-            />
-          </span>
-          <div className="flex flex-col gap-1.5">
-            <h2 className="text-xl font-semibold tracking-tight">{done.title}</h2>
-            <p className="text-sm text-muted-foreground">{done.message}</p>
-          </div>
-          {(preview || schema.form.settings.allowMultipleSubmissions) && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDone(null);
-                setValues(initialValues(schema.steps));
-                setFiles({});
-                setErrors({});
-                setStepIndex(0);
-              }}
-            >
-              Submit another response
-            </Button>
-          )}
-        </CardContent>
+        <CardContent className="py-10">{successPanel}</CardContent>
       </Card>
     );
   }
 
   if (!step) {
-    return (
+    const emptyPanel = (
+      <p className="text-center text-sm text-muted-foreground">
+        This form has no fields yet.
+      </p>
+    );
+    return fullScreen ? (
+      <FullScreenPanel brand={brand}>{emptyPanel}</FullScreenPanel>
+    ) : (
       <Card className="w-full">
-        <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          This form has no fields yet.
-        </CardContent>
+        <CardContent className="py-10">{emptyPanel}</CardContent>
       </Card>
     );
   }
 
   const progress = Math.round(((stepIndex + 1) / steps.length) * 100);
+  const showProgress = multiStep && schema.form.settings.showProgressBar;
 
+  // ---- pieces both layouts share, so the two cannot drift apart
+
+  const progressBar = (
+    <Progress value={progress} className="gap-1.5">
+      <div className="flex w-full items-center justify-between gap-3">
+        <ProgressLabel className="truncate text-xs font-medium text-muted-foreground">
+          Step {stepIndex + 1} of {steps.length}
+          {step.title ? " · " + step.title : ""}
+        </ProgressLabel>
+        <ProgressValue className="shrink-0 text-xs" />
+      </div>
+    </Progress>
+  );
+
+  const errorAlert = formError ? (
+    <Alert variant="destructive">
+      <HugeiconsIcon icon={Alert02Icon} className="size-4" strokeWidth={2} />
+      <AlertTitle>Could not submit</AlertTitle>
+      <AlertDescription>{formError}</AlertDescription>
+    </Alert>
+  ) : null;
+
+  const fieldsGrid = (
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-5 sm:grid-cols-6",
+        // On a phone the 32px desktop controls are an awkward tap target, so the
+        // full-screen layout grows them — the date picker included, or it would
+        // sit shorter than the inputs beside it. min-h rather than h, so this
+        // never fights the height the control itself sets.
+        fullScreen &&
+          "max-sm:**:data-[slot=input]:min-h-11 max-sm:**:data-[slot=select-trigger]:min-h-11 max-sm:**:data-[slot=popover-trigger]:min-h-11 max-sm:**:data-[slot=textarea]:min-h-28",
+      )}
+    >
+      {step.fields.map((field) => (
+        <div key={field.id} className={WIDTH_CLASS[field.width]}>
+          <FieldControl
+            field={field}
+            value={values[field.key] ?? ""}
+            error={errors[field.key]}
+            disabled={submitting}
+            fileName={files[field.key]?.name ?? null}
+            onChange={(value) => setValue(field.key, value)}
+            onFileChange={(file) =>
+              setFiles((current) => {
+                const next = { ...current };
+                if (file) next[field.key] = file;
+                else delete next[field.key];
+                return next;
+              })
+            }
+          />
+        </div>
+      ))}
+    </div>
+  );
+
+  const backButton =
+    stepIndex > 0 ? (
+      <Button
+        type="button"
+        variant="ghost"
+        size={fullScreen ? "lg" : "default"}
+        disabled={submitting}
+        className={fullScreen ? "max-sm:h-11" : undefined}
+        onClick={() => {
+          const previous = steps[Math.max(0, stepIndex - 1)];
+          if (previous) setStepId(previous.id);
+        }}
+      >
+        <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} />
+        Back
+      </Button>
+    ) : (
+      <span aria-hidden />
+    );
+
+  const primaryButton = (
+    <Button
+      type="submit"
+      size="lg"
+      disabled={submitting}
+      // Spreads to full width on a phone when it is the only button there.
+      className={fullScreen ? "px-5 max-sm:h-11 max-sm:flex-1" : undefined}
+    >
+      {submitting && <Spinner />}
+      {submitting
+        ? "Submitting…"
+        : isLast
+          ? schema.form.settings.submitLabel
+          : "Continue"}
+      {!isLast && !submitting && (
+        <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
+      )}
+    </Button>
+  );
+
+  // ---- full-screen layout: the form owns the whole page
+  if (fullScreen) {
+    return (
+      <div className="flex w-full flex-1 flex-col">
+        {showProgress && (
+          <div className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur-sm">
+            <div className="mx-auto w-full max-w-2xl px-4 py-2.5 sm:px-6">
+              {progressBar}
+            </div>
+          </div>
+        )}
+
+        <form
+          onSubmit={onFormSubmit}
+          noValidate
+          className="flex w-full flex-1 flex-col"
+        >
+          <div className="flex flex-1 flex-col px-4 py-8 sm:px-6 sm:py-12">
+            <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 sm:gap-8">
+              <div className="flex flex-col gap-2">
+                {stepIndex === 0 ? (
+                  <>
+                    <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+                      {schema.form.title}
+                    </h1>
+                    {schema.form.description && (
+                      <p className="text-sm leading-relaxed text-muted-foreground sm:text-base">
+                        {schema.form.description}
+                      </p>
+                    )}
+                    {multiStep && step.description && (
+                      <p className="text-sm text-muted-foreground">
+                        {step.description}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-xl font-semibold tracking-tight text-balance sm:text-2xl">
+                      {step.title}
+                    </h2>
+                    {step.description && (
+                      <p className="text-sm leading-relaxed text-muted-foreground sm:text-base">
+                        {step.description}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {errorAlert}
+              {fieldsGrid}
+            </div>
+
+            {/* mt-auto drops the brand line to the foot of a short form. */}
+            {brand && <div className="mt-auto shrink-0 pt-12">{brand}</div>}
+          </div>
+
+          {/* Sticky rather than fixed: the bar keeps its place in the layout, so
+              it can never cover the last field at the end of a long form. */}
+          <div className="sticky bottom-0 z-20 border-t bg-background/95 backdrop-blur-sm">
+            <div className="mx-auto flex w-full max-w-2xl items-center justify-between gap-3 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+              {backButton}
+              {primaryButton}
+            </div>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  // ---- card layout: used by the builder preview
   return (
     <Card className="w-full">
       <CardHeader className="gap-3">
-        {multiStep && schema.form.settings.showProgressBar && (
-          <Progress value={progress} className="gap-1.5">
-            <div className="flex w-full items-center justify-between">
-              <ProgressLabel className="text-xs font-medium text-muted-foreground">
-                Step {stepIndex + 1} of {steps.length}
-                {step.title ? " · " + step.title : ""}
-              </ProgressLabel>
-              <ProgressValue className="text-xs" />
-            </div>
-          </Progress>
-        )}
+        {showProgress && progressBar}
 
         {stepIndex === 0 ? (
           <>
@@ -397,67 +638,37 @@ export function FormRenderer({ schema, preview = false }: Props) {
 
       <form onSubmit={onFormSubmit} noValidate>
         <CardContent className="flex flex-col gap-5">
-          {formError && (
-            <Alert variant="destructive">
-              <HugeiconsIcon icon={Alert02Icon} className="size-4" strokeWidth={2} />
-              <AlertTitle>Could not submit</AlertTitle>
-              <AlertDescription>{formError}</AlertDescription>
-            </Alert>
-          )}
-
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-6">
-            {step.fields.map((field) => (
-              <div key={field.id} className={WIDTH_CLASS[field.width]}>
-                <FieldControl
-                  field={field}
-                  value={values[field.key] ?? ""}
-                  error={errors[field.key]}
-                  disabled={submitting}
-                  fileName={files[field.key]?.name ?? null}
-                  onChange={(value) => setValue(field.key, value)}
-                  onFileChange={(file) =>
-                    setFiles((current) => {
-                      const next = { ...current };
-                      if (file) next[field.key] = file;
-                      else delete next[field.key];
-                      return next;
-                    })
-                  }
-                />
-              </div>
-            ))}
-          </div>
+          {errorAlert}
+          {fieldsGrid}
         </CardContent>
 
         {/* CardFooter draws its own top border, so no Separator above it. */}
         <CardFooter className="flex items-center justify-between gap-3">
-          {stepIndex > 0 ? (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={submitting}
-              onClick={() => setStepIndex((index) => Math.max(0, index - 1))}
-            >
-              <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} />
-              Back
-            </Button>
-          ) : (
-            <span aria-hidden />
-          )}
-
-          <Button type="submit" size="lg" disabled={submitting}>
-            {submitting && <Spinner />}
-            {submitting
-              ? "Submitting…"
-              : isLast
-                ? schema.form.settings.submitLabel
-                : "Continue"}
-            {!isLast && !submitting && (
-              <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
-            )}
-          </Button>
+          {backButton}
+          {primaryButton}
         </CardFooter>
       </form>
     </Card>
+  );
+}
+
+/**
+ * A standalone message (success, "no fields yet") on the full-screen layout:
+ * centred in whatever height is left, with the brand line pinned below it.
+ */
+function FullScreenPanel({
+  children,
+  brand,
+}: {
+  children: React.ReactNode;
+  brand?: React.ReactNode;
+}) {
+  return (
+    <div className="flex w-full flex-1 flex-col px-4 py-10 sm:px-6">
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
+        {children}
+      </div>
+      {brand && <div className="shrink-0 pt-10">{brand}</div>}
+    </div>
   );
 }
