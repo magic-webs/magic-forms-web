@@ -1,8 +1,17 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { mutation, query } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
 import { requireAdmin } from "./lib/authz";
+import { hashPassword, randomToken } from "./lib/crypto";
 import { userError } from "./lib/errors";
+import { uniqueSlug } from "./workspaces";
 
 /** Platform-wide numbers for the admin console. */
 export const overview = query({
@@ -136,5 +145,162 @@ export const deleteWorkspace = mutation({
       workspaceId: args.workspaceId,
     });
     return null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Provisioning
+//
+// The console above is read-and-moderate only: staff could see every account
+// but had no way to stand one up. These are what let an administrator — or an
+// AI agent signed in as one — create a company and its workspace outright.
+// ---------------------------------------------------------------------------
+
+/** Confirms the caller is platform staff, for actions that cannot reach the db. */
+export const assertPlatformAdmin = internalQuery({
+  args: {},
+  returns: v.id("users"),
+  handler: async (ctx) => {
+    const admin = await requireAdmin(ctx);
+    return admin._id;
+  },
+});
+
+/** The account, its workspace and the owner membership, in one transaction. */
+export const provisionCompany = internalMutation({
+  args: {
+    email: v.string(),
+    name: v.string(),
+    passwordHash: v.string(),
+    passwordSalt: v.string(),
+    company: v.string(),
+    workspaceName: v.string(),
+  },
+  returns: v.object({
+    userId: v.id("users"),
+    workspaceId: v.id("workspaces"),
+    slug: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", args.email))
+      .unique();
+    if (existing) userError("An account with that email already exists.");
+
+    const userId = await ctx.db.insert("users", {
+      email: args.email,
+      name: args.name,
+      passwordHash: args.passwordHash,
+      passwordSalt: args.passwordSalt,
+      role: "user",
+      company: args.company,
+    });
+
+    const slug = await uniqueSlug(ctx, args.workspaceName);
+    const workspaceId = await ctx.db.insert("workspaces", {
+      name: args.workspaceName,
+      slug,
+      ownerId: userId,
+      publicDirectory: true,
+    });
+    await ctx.db.insert("members", { workspaceId, userId, role: "owner" });
+
+    return { userId, workspaceId, slug };
+  },
+});
+
+type ProvisionedCompany = {
+  userId: Id<"users">;
+  workspaceId: Id<"workspaces">;
+  slug: string;
+  temporaryPassword: string | null;
+};
+
+/**
+ * Creates a company account and the workspace it owns.
+ *
+ * Password hashing needs Web Crypto, so this is an action; the write itself
+ * happens in `provisionCompany`. Omit `password` and one is generated and
+ * returned exactly once — nothing stores the plaintext, so it cannot be
+ * recovered afterwards, only reset.
+ */
+export const createCompany = action({
+  args: {
+    email: v.string(),
+    name: v.string(),
+    workspaceName: v.optional(v.string()),
+    password: v.optional(v.string()),
+  },
+  returns: v.object({
+    userId: v.id("users"),
+    workspaceId: v.id("workspaces"),
+    slug: v.string(),
+    temporaryPassword: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args): Promise<ProvisionedCompany> => {
+    await ctx.runQuery(internal.admin.assertPlatformAdmin, {});
+
+    const email = args.email.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      userError("Enter a valid email address.");
+    }
+    if (args.password !== undefined && args.password.length < 8) {
+      userError("Passwords must be at least 8 characters.");
+    }
+
+    const name = args.name.trim() || email.split("@")[0];
+    const company = args.workspaceName?.trim() || name;
+    const generated = args.password ? null : randomToken(12);
+    const { hash, salt } = await hashPassword(args.password ?? generated!);
+
+    const created: Omit<ProvisionedCompany, "temporaryPassword"> =
+      await ctx.runMutation(internal.admin.provisionCompany, {
+        email,
+        name,
+        passwordHash: hash,
+        passwordSalt: salt,
+        company,
+        workspaceName: args.workspaceName?.trim() || name + " workspace",
+      });
+
+    return { ...created, temporaryPassword: generated };
+  },
+});
+
+/** An extra workspace for a company that already has an account. */
+export const createWorkspaceFor = mutation({
+  args: {
+    ownerEmail: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+  },
+  returns: v.object({ workspaceId: v.id("workspaces"), slug: v.string() }),
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+    const email = args.ownerEmail.trim().toLowerCase();
+    const owner = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", email))
+      .unique();
+    if (!owner) userError("No Magic Forms account uses that email.");
+
+    const name = args.name.trim();
+    if (name.length < 2) userError("Workspace names need 2+ characters.");
+
+    const slug = await uniqueSlug(ctx, name);
+    const workspaceId = await ctx.db.insert("workspaces", {
+      name,
+      slug,
+      description: args.description?.trim() || undefined,
+      ownerId: owner._id,
+      publicDirectory: true,
+    });
+    await ctx.db.insert("members", {
+      workspaceId,
+      userId: owner._id,
+      role: "owner",
+    });
+    return { workspaceId, slug };
   },
 });

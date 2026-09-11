@@ -166,6 +166,83 @@ GET /api/v1/submissions?form={formSlug}&limit=50
 
 API keys are shown once and stored only as a SHA-256 digest.
 
+## MCP server
+
+`mcp/server.mjs` exposes Magic Forms to AI agents over the [Model Context
+Protocol](https://modelcontextprotocol.io), so an agent can provision a company,
+stand up a workspace, build and publish a form, manage members and read
+responses without touching the UI.
+
+It signs in as one ordinary Magic Forms account and holds that session, so the
+tools are bounded by exactly the same authorization as the web app — nothing is
+special-cased. A server signed in as a workspace `editor` cannot invite members;
+one signed in as staff gets the platform console. Which tools exist follows from
+who it signed in as: an account with the platform `admin` role also gets the
+`admin_*` tools. That is a convenience for the agent, not the security boundary
+— Convex re-checks the role on every call.
+
+### Setup
+
+Put the account it should act as in `.env.local`, which is git-ignored:
+
+```
+MAGIC_FORMS_EMAIL=agent@yourcompany.com
+MAGIC_FORMS_PASSWORD=...
+MAGIC_FORMS_APP_URL=http://localhost:3000   # optional, for the links it returns
+```
+
+Real environment variables win over the file, so a deployed agent needs no
+`.env.local` at all. Check what that account can do:
+
+```bash
+node mcp/server.mjs --list
+```
+
+`.mcp.json` in the repo root already registers the server for Claude Code and
+anything else reading that format. Clients wanting explicit config want
+`node mcp/server.mjs` run with this directory as the working directory.
+
+### Tools
+
+| Group | Tools |
+| --- | --- |
+| Workspaces | `whoami`, `list_workspaces`, `create_workspace`, `get_workspace`, `update_workspace`, `archive_workspace` |
+| Members | `list_members`, `add_member`, `update_member_role`, `remove_member` |
+| Forms | `build_form`, `list_forms`, `get_form`, `create_form`, `update_form`, `set_form_status`, `duplicate_form`, `delete_form` |
+| Steps and fields | `add_step`, `add_field`, `update_field`, `remove_field` |
+| Responses | `list_responses`, `export_responses_csv` |
+| Integrations | `list_webhooks`, `create_webhook`, `update_webhook`, `test_webhook`, `list_webhook_deliveries`, `remove_webhook`, `list_api_keys`, `create_api_key`, `revoke_api_key` |
+| Platform admin | `admin_overview`, `admin_list_users`, `admin_list_workspaces`, `admin_create_company`, `admin_create_workspace_for`, `admin_set_user_role`, `admin_set_user_disabled`, `admin_delete_workspace` |
+
+`build_form` is the one to reach for first: it takes a whole form — steps,
+fields, options, validation and settings — and returns a published URL in a
+single call.
+
+```json
+{
+  "workspaceId": "...",
+  "title": "Supplier onboarding",
+  "publish": true,
+  "steps": [
+    {
+      "title": "Your company",
+      "fields": [
+        { "type": "text", "label": "Company name", "key": "company_name", "required": true, "width": "half" },
+        { "type": "email", "label": "Contact email", "key": "contact_email", "required": true, "width": "half" },
+        { "type": "select", "label": "Category", "key": "category",
+          "options": [{ "label": "Produce", "value": "produce" }] }
+      ]
+    }
+  ]
+}
+```
+
+`admin_create_company` is the other half: it creates the account, the workspace
+it owns and the owner membership together, returning a temporary password once
+when you do not supply one. It is backed by two Convex functions added for it —
+`admin:createCompany` and `admin:createWorkspaceFor` — because the admin console
+could previously only read and moderate, never provision.
+
 ## Webhooks
 
 Ten events: `form.created`, `form.updated`, `form.published`,
@@ -213,7 +290,7 @@ convex/
   submissions.ts     responses, CSV export, read state
   webhooks.ts        endpoints, signed delivery with retries, delivery log
   apiKeys.ts         hashed keys
-  admin.ts           platform console
+  admin.ts           platform console, and company provisioning
   publicForms.ts     unauthenticated form rendering and submission
   api.ts             query/mutation backends for the REST endpoints
   cleanup.ts         batched cascade deletes, scheduled pruning
@@ -223,6 +300,18 @@ convex/
     authz.ts         requireUser / requireWorkspaceAccess / requireFormAccess
     events.ts        webhook fan-out
     validate.ts      server-side submission validation
+```
+
+```
+mcp/
+  server.mjs         stdio MCP server: signs in, gates tools by role, serves them
+  convex.mjs         the signed-in Convex session the tools run on
+  schema.mjs         JSON Schema builders and the shared enums
+  tools/
+    workspace.mjs    whoami, workspaces, members
+    forms.mjs        build_form, forms, steps, fields, responses
+    integrations.mjs webhooks and API keys
+    admin.mjs        platform staff tools
 ```
 
 ## UI

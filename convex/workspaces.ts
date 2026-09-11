@@ -10,7 +10,8 @@ import {
 import { memberRole } from "./schema";
 import { userError } from "./lib/errors";
 
-async function uniqueSlug(
+/** A slug no other workspace is using, numbered when the name is taken. */
+export async function uniqueSlug(
   ctx: MutationCtx,
   desired: string,
   ignore?: Id<"workspaces">,
