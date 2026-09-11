@@ -6,11 +6,15 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
+  AiBrain01Icon,
+  CheckmarkCircle02Icon,
   CodeIcon,
   Copy01Icon,
   Delete02Icon,
   Key01Icon,
   LockIcon,
+  MinusSignIcon,
+  RobotIcon,
 } from "@hugeicons/core-free-icons";
 
 import { api } from "@/convex/_generated/api";
@@ -57,12 +61,73 @@ import {
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
 
+const subscribeToNothing = () => () => {};
+const readOrigin = () => window.location.origin;
+const readOriginDuringServerRender = () => "";
+
+/** Mirrors the RANK ladder in convex/lib/authz.ts. */
+const ROLE_RANK: Record<string, number> = {
+  viewer: 0,
+  editor: 1,
+  admin: 2,
+  owner: 3,
+};
+
+const ROLE_BLURB: Record<string, string> = {
+  viewer:
+    "Read-only. It can list forms and read responses, but cannot change anything.",
+  editor:
+    "It can build, publish and edit forms and work with responses, but cannot touch members, webhooks or keys.",
+  admin:
+    "It can do everything in this workspace except delete the workspace itself.",
+  owner:
+    "Everything, including deleting the workspace and everything inside it.",
+};
+
+/**
+ * What each group of tools needs, taken from the role each Convex function
+ * actually enforces — `delete_form` is an admin action, not an editor one.
+ */
+const MCP_CAPABILITIES = [
+  {
+    needs: "viewer",
+    label: "Read",
+    tools:
+      "whoami, list_workspaces, get_workspace, list_forms, get_form, list_members, list_responses, export_responses_csv, list_webhooks, list_webhook_deliveries",
+  },
+  {
+    needs: "editor",
+    label: "Build forms",
+    tools:
+      "build_form, create_form, update_form, set_form_status, duplicate_form, add_step, add_field, update_field, remove_field",
+  },
+  {
+    needs: "admin",
+    label: "Manage the workspace",
+    tools:
+      "delete_form, update_workspace, add_member, update_member_role, remove_member, create_webhook, update_webhook, test_webhook, remove_webhook, list_api_keys, create_api_key, revoke_api_key",
+  },
+  {
+    needs: "owner",
+    label: "Delete the workspace",
+    tools: "archive_workspace",
+  },
+];
+
 export default function ApiKeysPage() {
   const params = useParams<{ workspaceId: string }>();
   const workspaceId = params.workspaceId as Id<"workspaces">;
 
   const workspace = useQuery(api.workspaces.get, { workspaceId });
-  const keys = useQuery(api.apiKeys.listByWorkspace, { workspaceId });
+  const roleKnown = workspace !== undefined && workspace !== null;
+  const canManageKeys =
+    roleKnown && ROLE_RANK[workspace.role] >= ROLE_RANK.admin;
+  // Skipped rather than guarded in the markup: apiKeys.listByWorkspace requires
+  // the admin role and throws for anyone below it, which took down the page.
+  const keys = useQuery(
+    api.apiKeys.listByWorkspace,
+    canManageKeys ? { workspaceId } : "skip",
+  );
   const createKey = useAction(api.apiKeys.create);
   const revokeKey = useMutation(api.apiKeys.revoke);
   const removeKey = useMutation(api.apiKeys.remove);
@@ -74,6 +139,38 @@ export default function ApiKeysPage() {
 
   const siteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE_URL ?? "";
   const slug = workspace?.slug ?? "your-workspace";
+
+  // `window` does not exist during the server render and the origin never
+  // changes once it does, so React hydrates against the server snapshot and
+  // swaps in the real value — no state to keep and no effect to run.
+  const origin = React.useSyncExternalStore(
+    subscribeToNothing,
+    readOrigin,
+    readOriginDuringServerRender,
+  );
+
+  const me = useQuery(api.auth.me);
+  const role = workspace?.role ?? "viewer";
+
+  const mcpConfig = JSON.stringify(
+    {
+      mcpServers: {
+        "magic-forms": {
+          command: "node",
+          args: ["/path/to/magic-forms-web/mcp/server.mjs"],
+          env: {
+            MAGIC_FORMS_EMAIL: "agent@yourcompany.com",
+            MAGIC_FORMS_PASSWORD: "the agent account password",
+            MAGIC_FORMS_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL ?? "",
+            NEXT_PUBLIC_CONVEX_SITE_URL: siteUrl,
+            MAGIC_FORMS_APP_URL: origin || "http://localhost:3000",
+          },
+        },
+      },
+    },
+    null,
+    2,
+  );
 
   const endpoints = [
     {
@@ -108,10 +205,12 @@ export default function ApiKeysPage() {
         <SidebarTrigger />
         <Separator orientation="vertical" className="mr-1 h-4" />
         <span className="truncate text-sm font-medium">API keys</span>
-        <Button size="sm" className="ml-auto" onClick={() => setDialogOpen(true)}>
-          <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-          <span className="hidden sm:inline">New key</span>
-        </Button>
+        {canManageKeys && (
+          <Button size="sm" className="ml-auto" onClick={() => setDialogOpen(true)}>
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+            <span className="hidden sm:inline">New key</span>
+          </Button>
+        )}
       </header>
 
       <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-6">
@@ -189,11 +288,27 @@ export default function ApiKeysPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="min-w-0">
-            {keys === undefined && (
+            {(!roleKnown || (canManageKeys && keys === undefined)) && (
               <div className="flex flex-col gap-2">
                 <Skeleton className="h-11 w-full" />
                 <Skeleton className="h-11 w-full" />
               </div>
+            )}
+
+            {roleKnown && !canManageKeys && (
+              <Empty>
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <HugeiconsIcon icon={LockIcon} strokeWidth={2} />
+                  </EmptyMedia>
+                  <EmptyTitle>Admins and owners only</EmptyTitle>
+                  <EmptyDescription>
+                    API keys read every response in the workspace, so only the
+                    admin and owner roles can see or create them. You are {role}
+                    here.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
             )}
 
             {keys?.length === 0 && (
@@ -291,6 +406,106 @@ export default function ApiKeysPage() {
                 </Table>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* ---- MCP ---- */}
+        <Card className="min-w-0">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <HugeiconsIcon
+                icon={AiBrain01Icon}
+                className="size-4 text-primary"
+                strokeWidth={2}
+              />
+              AI agents
+            </CardTitle>
+            <CardDescription>
+              Connect an agent over the Model Context Protocol. It signs in as a
+              Magic Forms account instead of carrying an API key, so it can do
+              exactly what that account can do here and nothing more.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex min-w-0 flex-col gap-4">
+            <Alert>
+              <HugeiconsIcon icon={RobotIcon} className="size-4" strokeWidth={2} />
+              <AlertTitle>
+                An agent signed in as you would be {role} in this workspace
+              </AlertTitle>
+              <AlertDescription>
+                {ROLE_BLURB[role]}
+                {me?.role === "admin" &&
+                  " You are platform staff as well, so it would also get the admin_* tools: provisioning companies and workspaces, and managing accounts."}
+              </AlertDescription>
+            </Alert>
+
+            <div className="flex min-w-0 flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label>Client configuration</Label>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(mcpConfig);
+                    toast.add({ title: "Configuration copied" });
+                  }}
+                >
+                  <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
+                  Copy
+                </Button>
+              </div>
+              <div className="overflow-x-auto rounded-lg bg-muted">
+                <pre className="p-3 text-xs leading-6">
+                  <code className="font-mono">{mcpConfig}</code>
+                </pre>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Point <code className="font-mono">args</code> at your checkout and
+                restart the client. Give the agent its own account rather than
+                your sign-in, and add it here at the lowest role that does the
+                job.
+              </p>
+            </div>
+
+            <div className="flex min-w-0 flex-col gap-2">
+              <Label>What it could do as you</Label>
+              {MCP_CAPABILITIES.map((capability) => {
+                const allowed =
+                  ROLE_RANK[role] >= ROLE_RANK[capability.needs];
+                return (
+                  <div
+                    key={capability.needs}
+                    className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <HugeiconsIcon
+                        icon={allowed ? CheckmarkCircle02Icon : MinusSignIcon}
+                        className={
+                          allowed
+                            ? "size-4 shrink-0 text-primary"
+                            : "size-4 shrink-0 text-muted-foreground"
+                        }
+                        strokeWidth={2}
+                      />
+                      <span className="text-sm font-medium">
+                        {capability.label}
+                      </span>
+                      <span className="sr-only">
+                        {allowed
+                          ? "available at your role"
+                          : "not available at your role"}
+                      </span>
+                      <Badge variant="outline" className="ml-auto">
+                        {capability.needs}
+                      </Badge>
+                    </div>
+                    <p className="font-mono text-xs break-words text-muted-foreground">
+                      {capability.tools}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
           </CardContent>
         </Card>
       </div>
