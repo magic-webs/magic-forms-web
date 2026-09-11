@@ -7,6 +7,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Alert02Icon } from "@hugeicons/core-free-icons";
 
 import { useSession } from "@/components/providers";
+import { readError } from "@/lib/format";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,11 +42,7 @@ export default function SignUpPage() {
       });
       router.replace("/app");
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message.replace(/^\[.*?\]\s*/, "").split("\n")[0]
-          : "Could not create your account.",
-      );
+      setError(readError(caught));
       setSubmitting(false);
     }
   }

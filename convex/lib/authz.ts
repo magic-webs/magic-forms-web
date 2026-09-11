@@ -1,5 +1,6 @@
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
+import { userError } from "./errors";
 
 export type AnyCtx = QueryCtx | MutationCtx;
 
@@ -15,13 +16,13 @@ export async function getCurrentUser(ctx: AnyCtx): Promise<Doc<"users"> | null> 
 
 export async function requireUser(ctx: AnyCtx): Promise<Doc<"users">> {
   const user = await getCurrentUser(ctx);
-  if (!user) throw new Error("Not signed in.");
+  if (!user) userError("Not signed in.");
   return user;
 }
 
 export async function requireAdmin(ctx: AnyCtx): Promise<Doc<"users">> {
   const user = await requireUser(ctx);
-  if (user.role !== "admin") throw new Error("Administrator access required.");
+  if (user.role !== "admin") userError("Administrator access required.");
   return user;
 }
 
@@ -49,7 +50,7 @@ export async function requireWorkspaceAccess(
 ): Promise<WorkspaceAccess> {
   const user = await requireUser(ctx);
   const workspace = await ctx.db.get("workspaces", workspaceId);
-  if (!workspace) throw new Error("Workspace not found.");
+  if (!workspace) userError("Workspace not found.");
 
   if (user.role === "admin") return { user, workspace, role: "owner" };
 
@@ -60,9 +61,9 @@ export async function requireWorkspaceAccess(
     )
     .unique();
 
-  if (!membership) throw new Error("You do not have access to this workspace.");
+  if (!membership) userError("You do not have access to this workspace.");
   if (RANK[membership.role] < RANK[minimumRole]) {
-    throw new Error(`This action requires the ${minimumRole} role.`);
+    userError(`This action requires the ${minimumRole} role.`);
   }
   return { user, workspace, role: membership.role };
 }
@@ -74,7 +75,7 @@ export async function requireFormAccess(
   minimumRole: Doc<"members">["role"] = "viewer",
 ): Promise<WorkspaceAccess & { form: Doc<"forms"> }> {
   const form = await ctx.db.get("forms", formId);
-  if (!form) throw new Error("Form not found.");
+  if (!form) userError("Form not found.");
   const access = await requireWorkspaceAccess(ctx, form.workspaceId, minimumRole);
   return { ...access, form };
 }

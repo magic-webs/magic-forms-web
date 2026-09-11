@@ -9,6 +9,7 @@ import {
 } from "./lib/authz";
 import { dispatchEvent } from "./lib/events";
 import { fieldOption, fieldType, fieldValidation } from "./schema";
+import { userError } from "./lib/errors";
 
 const DEFAULT_SETTINGS = {
   submitLabel: "Submit",
@@ -244,7 +245,7 @@ export const setStatus = mutation({
         .withIndex("by_form", (q) => q.eq("formId", form._id))
         .take(2);
       if (fields.length === 0) {
-        throw new Error("Add at least one field before publishing.");
+        userError("Add at least one field before publishing.");
       }
     }
     await ctx.db.patch("forms", args.formId, { status: args.status });
@@ -361,7 +362,7 @@ export const addStep = mutation({
       .query("steps")
       .withIndex("by_form_and_order", (q) => q.eq("formId", args.formId))
       .take(50);
-    if (steps.length >= 20) throw new Error("A form can have up to 20 steps.");
+    if (steps.length >= 20) userError("A form can have up to 20 steps.");
     const order = steps.reduce((max, s) => Math.max(max, s.order), -1) + 1;
     return await ctx.db.insert("steps", {
       formId: args.formId,
@@ -380,7 +381,7 @@ export const updateStep = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const step = await ctx.db.get("steps", args.stepId);
-    if (!step) throw new Error("Step not found.");
+    if (!step) userError("Step not found.");
     await requireFormAccess(ctx, step.formId, "editor");
     await ctx.db.patch("steps", args.stepId, {
       title: args.title?.trim() || step.title,
@@ -405,7 +406,7 @@ export const removeStep = mutation({
       .query("steps")
       .withIndex("by_form_and_order", (q) => q.eq("formId", step.formId))
       .take(50);
-    if (steps.length <= 1) throw new Error("A form needs at least one step.");
+    if (steps.length <= 1) userError("A form needs at least one step.");
 
     const fields = await ctx.db
       .query("fields")
@@ -454,7 +455,7 @@ export const addField = mutation({
   returns: v.id("fields"),
   handler: async (ctx, args) => {
     const step = await ctx.db.get("steps", args.stepId);
-    if (!step) throw new Error("Step not found.");
+    if (!step) userError("Step not found.");
     await requireFormAccess(ctx, step.formId, "editor");
 
     const siblings = await ctx.db
@@ -545,7 +546,7 @@ export const updateField = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const field = await ctx.db.get("fields", args.fieldId);
-    if (!field) throw new Error("Field not found.");
+    if (!field) userError("Field not found.");
     await requireFormAccess(ctx, field.formId, "editor");
 
     const patch: Partial<Doc<"fields">> = {};
@@ -605,11 +606,11 @@ export const moveField = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const field = await ctx.db.get("fields", args.fieldId);
-    if (!field) throw new Error("Field not found.");
+    if (!field) userError("Field not found.");
     await requireFormAccess(ctx, field.formId, "editor");
     const targetStep = await ctx.db.get("steps", args.targetStepId);
     if (!targetStep || targetStep.formId !== field.formId) {
-      throw new Error("Target step is not part of this form.");
+      userError("Target step is not part of this form.");
     }
 
     const sourceStepId = field.stepId;

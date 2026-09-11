@@ -12,6 +12,7 @@ import { requireWorkspaceAccess } from "./lib/authz";
 import { hmacSha256, randomToken } from "./lib/crypto";
 import { ALL_EVENTS } from "./lib/events";
 import { webhookEvent } from "./schema";
+import { userError } from "./lib/errors";
 
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [15_000, 60_000];
@@ -72,12 +73,12 @@ export const create = mutation({
     await requireWorkspaceAccess(ctx, args.workspaceId, "admin");
     assertHttpsUrl(args.url);
     if (args.events.length === 0) {
-      throw new Error("Pick at least one event to listen for.");
+      userError("Pick at least one event to listen for.");
     }
     if (args.formId) {
       const form = await ctx.db.get("forms", args.formId);
       if (!form || form.workspaceId !== args.workspaceId) {
-        throw new Error("That form is not in this workspace.");
+        userError("That form is not in this workspace.");
       }
     }
 
@@ -111,7 +112,7 @@ export const update = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const hook = await ctx.db.get("webhooks", args.webhookId);
-    if (!hook) throw new Error("Webhook not found.");
+    if (!hook) userError("Webhook not found.");
     await requireWorkspaceAccess(ctx, hook.workspaceId, "admin");
 
     const patch: Partial<Doc<"webhooks">> = {};
@@ -122,7 +123,7 @@ export const update = mutation({
     }
     if (args.events !== undefined) {
       if (args.events.length === 0) {
-        throw new Error("Pick at least one event to listen for.");
+        userError("Pick at least one event to listen for.");
       }
       patch.events = args.events;
     }
@@ -142,7 +143,7 @@ export const rotateSecret = mutation({
   returns: v.string(),
   handler: async (ctx, args) => {
     const hook = await ctx.db.get("webhooks", args.webhookId);
-    if (!hook) throw new Error("Webhook not found.");
+    if (!hook) userError("Webhook not found.");
     await requireWorkspaceAccess(ctx, hook.workspaceId, "admin");
     const secret = "whsec_" + randomToken(24);
     await ctx.db.patch("webhooks", args.webhookId, { secret });
@@ -176,7 +177,7 @@ export const sendTest = mutation({
   returns: v.id("webhookDeliveries"),
   handler: async (ctx, args) => {
     const hook = await ctx.db.get("webhooks", args.webhookId);
-    if (!hook) throw new Error("Webhook not found.");
+    if (!hook) userError("Webhook not found.");
     await requireWorkspaceAccess(ctx, hook.workspaceId, "admin");
 
     const body = JSON.stringify({
@@ -399,9 +400,9 @@ function assertHttpsUrl(url: string) {
   try {
     parsed = new URL(url.trim());
   } catch {
-    throw new Error("Enter a valid absolute URL.");
+    userError("Enter a valid absolute URL.");
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error("Webhook URLs must use http:// or https://");
+    userError("Webhook URLs must use http:// or https://");
   }
 }

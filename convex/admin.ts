@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
 import { requireAdmin } from "./lib/authz";
+import { userError } from "./lib/errors";
 
 /** Platform-wide numbers for the admin console. */
 export const overview = query({
@@ -94,7 +95,7 @@ export const setUserRole = mutation({
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
     if (admin._id === args.userId && args.role !== "admin") {
-      throw new Error("You cannot remove your own administrator access.");
+      userError("You cannot remove your own administrator access.");
     }
     await ctx.db.patch("users", args.userId, { role: args.role });
     return null;
@@ -107,7 +108,7 @@ export const setUserDisabled = mutation({
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
     if (admin._id === args.userId) {
-      throw new Error("You cannot disable your own account.");
+      userError("You cannot disable your own account.");
     }
     await ctx.db.patch("users", args.userId, { disabled: args.disabled });
 

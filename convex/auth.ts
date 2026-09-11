@@ -17,6 +17,7 @@ import {
   signAccessToken,
 } from "./lib/crypto";
 import { getCurrentUser, requireUser, slugify } from "./lib/authz";
+import { userError } from "./lib/errors";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 30; // 30 minutes
@@ -76,7 +77,7 @@ export const createUserRecord = internalMutation({
       .query("users")
       .withIndex("by_email", (q) => q.eq("email", args.email))
       .unique();
-    if (existing) throw new Error("An account with that email already exists.");
+    if (existing) userError("An account with that email already exists.");
 
     const userId = await ctx.db.insert("users", {
       email: args.email,
@@ -165,7 +166,7 @@ async function mintAccessToken(userId: Id<"users">, role: string) {
   const keyId = process.env.JWT_KID;
   const siteUrl = process.env.CONVEX_SITE_URL;
   if (!privateKey || !keyId || !siteUrl) {
-    throw new Error("Auth signing keys are not configured on this deployment.");
+    userError("Auth signing keys are not configured on this deployment.");
   }
   return await signAccessToken({
     privateKeyPkcs8Base64: privateKey,
@@ -194,10 +195,10 @@ export const signUp = action({
   handler: async (ctx, args): Promise<typeof authResult.type> => {
     const email = args.email.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      throw new Error("Enter a valid email address.");
+      userError("Enter a valid email address.");
     }
     if (args.password.length < 8) {
-      throw new Error("Passwords must be at least 8 characters.");
+      userError("Passwords must be at least 8 characters.");
     }
 
     const name = args.name.trim() || email.split("@")[0];
@@ -254,7 +255,7 @@ export const signIn = action({
       user?.passwordSalt ?? "no-such-user",
     );
     if (!user || user.disabled || !safeEqual(hash, user.passwordHash)) {
-      throw new Error("Incorrect email or password.");
+      userError("Incorrect email or password.");
     }
 
     const refreshToken = randomToken();

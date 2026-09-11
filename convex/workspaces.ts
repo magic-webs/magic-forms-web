@@ -8,6 +8,7 @@ import {
   slugify,
 } from "./lib/authz";
 import { memberRole } from "./schema";
+import { userError } from "./lib/errors";
 
 async function uniqueSlug(
   ctx: MutationCtx,
@@ -103,7 +104,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
     const name = args.name.trim();
-    if (name.length < 2) throw new Error("Workspace names need 2+ characters.");
+    if (name.length < 2) userError("Workspace names need 2+ characters.");
 
     const slug = await uniqueSlug(ctx, name);
     const workspaceId = await ctx.db.insert("workspaces", {
@@ -135,7 +136,7 @@ export const update = mutation({
     const patch: Partial<Doc<"workspaces">> = {};
     if (args.name !== undefined) {
       const name = args.name.trim();
-      if (name.length < 2) throw new Error("Workspace names need 2+ characters.");
+      if (name.length < 2) userError("Workspace names need 2+ characters.");
       patch.name = name;
       patch.slug = await uniqueSlug(ctx, name, args.workspaceId);
     }
@@ -212,7 +213,7 @@ export const addMember = mutation({
       .withIndex("by_email", (q) => q.eq("email", email))
       .unique();
     if (!user) {
-      throw new Error(
+      userError(
         "No Magic Forms account uses that email yet — ask them to sign up first.",
       );
     }
@@ -222,7 +223,7 @@ export const addMember = mutation({
         q.eq("workspaceId", args.workspaceId).eq("userId", user._id),
       )
       .unique();
-    if (existing) throw new Error("That person is already a member.");
+    if (existing) userError("That person is already a member.");
 
     await ctx.db.insert("members", {
       workspaceId: args.workspaceId,
@@ -238,14 +239,14 @@ export const updateMemberRole = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const member = await ctx.db.get("members", args.memberId);
-    if (!member) throw new Error("Member not found.");
+    if (!member) userError("Member not found.");
     const { workspace } = await requireWorkspaceAccess(
       ctx,
       member.workspaceId,
       "admin",
     );
     if (member.userId === workspace.ownerId) {
-      throw new Error("The workspace owner's role cannot be changed.");
+      userError("The workspace owner's role cannot be changed.");
     }
     await ctx.db.patch("members", args.memberId, { role: args.role });
     return null;
@@ -264,7 +265,7 @@ export const removeMember = mutation({
       "admin",
     );
     if (member.userId === workspace.ownerId) {
-      throw new Error("The workspace owner cannot be removed.");
+      userError("The workspace owner cannot be removed.");
     }
     await ctx.db.delete("members", args.memberId);
     return null;

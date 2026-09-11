@@ -1,3 +1,5 @@
+import { ConvexError } from "convex/values";
+
 /** Small formatting helpers shared across the dashboard pages. */
 
 export function formatWhen(timestamp: number): string {
@@ -18,15 +20,36 @@ export function formatDateTime(timestamp: number): string {
   });
 }
 
-/** Convex wraps handler errors; keep only the message the handler threw. */
+/**
+ * Turns whatever Convex threw into a sentence worth showing someone.
+ *
+ * Handlers raise `ConvexError`, whose payload arrives intact on `data`. Older
+ * plain `Error`s arrive as a multi-line blob — a `[Request ID] Server Error`
+ * header, then `Uncaught Error: <the real message>` — so the useful line is
+ * never the first one.
+ */
 export function readError(caught: unknown): string {
+  if (caught instanceof ConvexError) {
+    const data: unknown = caught.data;
+    if (typeof data === "string" && data.trim()) return data.trim();
+    if (data && typeof data === "object" && "message" in data) {
+      return String((data as { message: unknown }).message);
+    }
+  }
   if (!(caught instanceof Error)) return "Something went wrong.";
-  const cleaned = caught.message
+
+  const thrown = caught.message.match(/Uncaught (?:Convex)?Error:\s*(.+)/);
+  if (thrown?.[1]) return thrown[1].trim();
+
+  const firstLine = caught.message
     .replace(/^\[.*?\]\s*/, "")
-    .replace(/^Uncaught Error:\s*/, "")
     .split("\n")[0]
     .trim();
-  return cleaned || "Something went wrong.";
+  // "Server Error" on its own tells nobody anything.
+  if (!firstLine || /^server error$/i.test(firstLine)) {
+    return "Something went wrong. Please try again.";
+  }
+  return firstLine;
 }
 
 export function initials(name: string): string {

@@ -18,6 +18,7 @@ import type * as forms from "../forms.js";
 import type * as http from "../http.js";
 import type * as lib_authz from "../lib/authz.js";
 import type * as lib_crypto from "../lib/crypto.js";
+import type * as lib_errors from "../lib/errors.js";
 import type * as lib_events from "../lib/events.js";
 import type * as lib_validate from "../lib/validate.js";
 import type * as publicForms from "../publicForms.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   "lib/authz": typeof lib_authz;
   "lib/crypto": typeof lib_crypto;
+  "lib/errors": typeof lib_errors;
   "lib/events": typeof lib_events;
   "lib/validate": typeof lib_validate;
   publicForms: typeof publicForms;
