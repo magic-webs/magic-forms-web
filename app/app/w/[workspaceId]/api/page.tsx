@@ -49,6 +49,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -74,14 +80,10 @@ const ROLE_RANK: Record<string, number> = {
 };
 
 const ROLE_BLURB: Record<string, string> = {
-  viewer:
-    "Read-only. It can list forms and read responses, but cannot change anything.",
-  editor:
-    "It can build, publish and edit forms and work with responses, but cannot touch members, webhooks or keys.",
-  admin:
-    "It can do everything in this workspace except delete the workspace itself.",
-  owner:
-    "Everything, including deleting the workspace and everything inside it.",
+  viewer: "Read-only: it can list forms and read responses, nothing more.",
+  editor: "It can build and publish forms, but not manage members or keys.",
+  admin: "Everything here except deleting the workspace.",
+  owner: "Everything, including deleting the workspace.",
 };
 
 /**
@@ -152,25 +154,14 @@ export default function ApiKeysPage() {
   const me = useQuery(api.auth.me);
   const role = workspace?.role ?? "viewer";
 
-  const mcpConfig = JSON.stringify(
-    {
-      mcpServers: {
-        "magic-forms": {
-          command: "node",
-          args: ["/path/to/magic-forms-web/mcp/server.mjs"],
-          env: {
-            MAGIC_FORMS_EMAIL: "agent@yourcompany.com",
-            MAGIC_FORMS_PASSWORD: "the agent account password",
-            MAGIC_FORMS_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL ?? "",
-            NEXT_PUBLIC_CONVEX_SITE_URL: siteUrl,
-            MAGIC_FORMS_APP_URL: origin || "http://localhost:3000",
-          },
-        },
-      },
-    },
-    null,
-    2,
-  );
+  const agentTokens = useQuery(api.mcpTokens.listByWorkspace, { workspaceId });
+  const createAgentToken = useAction(api.mcpTokens.create);
+  const revokeAgentToken = useMutation(api.mcpTokens.revoke);
+
+  const [agentDialogOpen, setAgentDialogOpen] = React.useState(false);
+  const [agentName, setAgentName] = React.useState("");
+  const [creatingAgent, setCreatingAgent] = React.useState(false);
+  const [issuedAgentUrl, setIssuedAgentUrl] = React.useState<string | null>(null);
 
   const endpoints = [
     {
@@ -213,301 +204,361 @@ export default function ApiKeysPage() {
         )}
       </header>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-6">
-        {/* ---- endpoints ---- */}
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <HugeiconsIcon icon={CodeIcon} className="size-4 text-primary" strokeWidth={2} />
-              Endpoints
-            </CardTitle>
-            <CardDescription>
-              Base URL <code className="font-mono">{siteUrl}</code>. CORS is open,
-              so a browser can call the read and submit endpoints directly.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex min-w-0 flex-col gap-3">
-            {endpoints.map((endpoint) => (
-              <div
-                key={endpoint.path}
-                className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-3"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge
-                    variant={endpoint.method === "GET" ? "secondary" : "default"}
-                    className="font-mono text-[0.7rem]"
-                  >
-                    {endpoint.method}
-                  </Badge>
-                  <code className="min-w-0 flex-1 truncate font-mono text-xs">
-                    {endpoint.path}
-                  </code>
-                  {endpoint.auth && (
-                    <Badge variant="outline" className="gap-1">
-                      <HugeiconsIcon icon={LockIcon} className="size-3" strokeWidth={2} />
-                      key
-                    </Badge>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="Copy endpoint"
-                    onClick={async () => {
-                      await navigator.clipboard.writeText(siteUrl + endpoint.path);
-                      toast.add({ title: "Endpoint copied" });
-                    }}
-                  >
-                    <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">{endpoint.body}</p>
-              </div>
-            ))}
+      <div className="flex min-w-0 flex-1 flex-col p-4 sm:p-6">
+        <Tabs defaultValue="endpoints" className="min-w-0">
+          <TabsList>
+            <TabsTrigger value="endpoints">Endpoints</TabsTrigger>
+            <TabsTrigger value="keys">Keys</TabsTrigger>
+            <TabsTrigger value="agents">AI agents</TabsTrigger>
+          </TabsList>
 
-            <div className="overflow-x-auto rounded-lg bg-muted">
-              <pre className="p-3 text-xs leading-6">
-                <code className="font-mono">{`curl -X POST \\
+          {/* ---- endpoints ---- */}
+          <TabsContent value="endpoints" className="min-w-0">
+            <Card className="min-w-0">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <HugeiconsIcon icon={CodeIcon} className="size-4 text-primary" strokeWidth={2} />
+                  Endpoints
+                </CardTitle>
+                <CardDescription>
+                  Base URL <code className="font-mono">{siteUrl}</code>. CORS is
+                  open.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex min-w-0 flex-col gap-3">
+                {endpoints.map((endpoint) => (
+                  <div
+                    key={endpoint.path}
+                    className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge
+                        variant={endpoint.method === "GET" ? "secondary" : "default"}
+                        className="font-mono text-[0.7rem]"
+                      >
+                        {endpoint.method}
+                      </Badge>
+                      <code className="min-w-0 flex-1 truncate font-mono text-xs">
+                        {endpoint.path}
+                      </code>
+                      {endpoint.auth && (
+                        <Badge variant="outline" className="gap-1">
+                          <HugeiconsIcon icon={LockIcon} className="size-3" strokeWidth={2} />
+                          key
+                        </Badge>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Copy endpoint"
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(siteUrl + endpoint.path);
+                          toast.add({ title: "Endpoint copied" });
+                        }}
+                      >
+                        <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{endpoint.body}</p>
+                  </div>
+                ))}
+
+                <div className="overflow-x-auto rounded-lg bg-muted">
+                  <pre className="p-3 text-xs leading-6">
+                    <code className="font-mono">{`curl -X POST \\
   ${siteUrl}/api/v1/submit/${slug}/{formSlug} \\
   -H 'content-type: application/json' \\
   -d '{ "full_name": "Ada Lovelace", "use_cases": ["Onboarding"] }'`}</code>
-              </pre>
-            </div>
-          </CardContent>
-        </Card>
+                  </pre>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-        {/* ---- keys ---- */}
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <HugeiconsIcon icon={Key01Icon} className="size-4 text-primary" strokeWidth={2} />
-              Keys
-            </CardTitle>
-            <CardDescription>
-              Only a SHA-256 digest is stored, so a key can never be shown again
-              after it is created.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="min-w-0">
-            {(!roleKnown || (canManageKeys && keys === undefined)) && (
-              <div className="flex flex-col gap-2">
-                <Skeleton className="h-11 w-full" />
-                <Skeleton className="h-11 w-full" />
-              </div>
-            )}
+          {/* ---- keys ---- */}
+          <TabsContent value="keys" className="min-w-0">
+            <Card className="min-w-0">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <HugeiconsIcon icon={Key01Icon} className="size-4 text-primary" strokeWidth={2} />
+                  Keys
+                </CardTitle>
+                <CardDescription>
+                  Read stored responses over HTTP. Shown once, stored only as a
+                  digest.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="min-w-0">
+                {(!roleKnown || (canManageKeys && keys === undefined)) && (
+                  <div className="flex flex-col gap-2">
+                    <Skeleton className="h-11 w-full" />
+                    <Skeleton className="h-11 w-full" />
+                  </div>
+                )}
 
-            {roleKnown && !canManageKeys && (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <HugeiconsIcon icon={LockIcon} strokeWidth={2} />
-                  </EmptyMedia>
-                  <EmptyTitle>Admins and owners only</EmptyTitle>
-                  <EmptyDescription>
-                    API keys read every response in the workspace, so only the
-                    admin and owner roles can see or create them. You are {role}
-                    here.
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            )}
+                {roleKnown && !canManageKeys && (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <HugeiconsIcon icon={LockIcon} strokeWidth={2} />
+                      </EmptyMedia>
+                      <EmptyTitle>Admins and owners only</EmptyTitle>
+                      <EmptyDescription>
+                        Only admins and owners can see or create keys. You are{" "}
+                        {role} here.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                )}
 
-            {keys?.length === 0 && (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <HugeiconsIcon icon={Key01Icon} strokeWidth={2} />
-                  </EmptyMedia>
-                  <EmptyTitle>No API keys yet</EmptyTitle>
-                  <EmptyDescription>
-                    Create a key to read stored responses over HTTP.
-                  </EmptyDescription>
-                </EmptyHeader>
-                <EmptyContent>
-                  <Button onClick={() => setDialogOpen(true)}>
-                    <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-                    Create a key
-                  </Button>
-                </EmptyContent>
-              </Empty>
-            )}
+                {keys?.length === 0 && (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <HugeiconsIcon icon={Key01Icon} strokeWidth={2} />
+                      </EmptyMedia>
+                      <EmptyTitle>No API keys yet</EmptyTitle>
+                      <EmptyDescription>
+                        Create a key to read stored responses over HTTP.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                    <EmptyContent>
+                      <Button onClick={() => setDialogOpen(true)}>
+                        <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                        Create a key
+                      </Button>
+                    </EmptyContent>
+                  </Empty>
+                )}
 
-            {keys && keys.length > 0 && (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Key</TableHead>
-                      <TableHead className="hidden sm:table-cell">Last used</TableHead>
-                      <TableHead className="w-24 text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {keys.map((key) => (
-                      <TableRow key={key._id}>
-                        <TableCell className="font-medium">
-                          <span className="flex items-center gap-2">
-                            {key.name}
-                            {key.revoked && <Badge variant="outline">revoked</Badge>}
+                {keys && keys.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Key</TableHead>
+                          <TableHead className="hidden sm:table-cell">Last used</TableHead>
+                          <TableHead className="w-24 text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {keys.map((key) => (
+                          <TableRow key={key._id}>
+                            <TableCell className="font-medium">
+                              <span className="flex items-center gap-2">
+                                {key.name}
+                                {key.revoked && <Badge variant="outline">revoked</Badge>}
+                              </span>
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {key.prefix}…
+                            </TableCell>
+                            <TableCell className="hidden text-muted-foreground sm:table-cell">
+                              {key.lastUsedAt ? formatWhen(key.lastUsedAt) : "never"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-1">
+                                {!key.revoked && (
+                                  <Button
+                                    variant="ghost"
+                                    size="xs"
+                                    onClick={async () => {
+                                      try {
+                                        await revokeKey({ apiKeyId: key._id });
+                                        toast.add({ title: "Key revoked" });
+                                      } catch (caught) {
+                                        toast.add({
+                                          title: "Could not revoke",
+                                          description: readError(caught),
+                                          type: "error",
+                                        });
+                                      }
+                                    }}
+                                  >
+                                    Revoke
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label="Delete key"
+                                  onClick={async () => {
+                                    try {
+                                      await removeKey({ apiKeyId: key._id });
+                                      toast.add({ title: "Key deleted" });
+                                    } catch (caught) {
+                                      toast.add({
+                                        title: "Could not delete",
+                                        description: readError(caught),
+                                        type: "error",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* ---- agents ---- */}
+          <TabsContent value="agents" className="min-w-0">
+            <Card className="min-w-0">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <HugeiconsIcon
+                    icon={AiBrain01Icon}
+                    className="size-4 text-primary"
+                    strokeWidth={2}
+                  />
+                  AI agents
+                </CardTitle>
+                <CardDescription>
+                  Give an AI agent a URL it can drive this workspace through. It
+                  acts as your account, so it can do only what you can.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex min-w-0 flex-col gap-4">
+                <Alert>
+                  <HugeiconsIcon icon={RobotIcon} className="size-4" strokeWidth={2} />
+                  <AlertTitle>
+                    An agent signed in as you would be {role} in this workspace
+                  </AlertTitle>
+                  <AlertDescription>
+                    {ROLE_BLURB[role]}
+                    {me?.role === "admin" &&
+                      " As platform staff it also gets the admin_* tools."}
+                  </AlertDescription>
+                </Alert>
+
+                <div className="flex min-w-0 flex-col gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label>Endpoint URL</Label>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setAgentDialogOpen(true)}
+                    >
+                      <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                      New agent URL
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Paste one into any MCP client — nothing to install. Shown once,
+                    revocable here.
+                  </p>
+
+                  {agentTokens === undefined && <Skeleton className="h-16 w-full" />}
+
+                  {agentTokens?.length === 0 && (
+                    <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
+                      No agent URLs yet.
+                    </div>
+                  )}
+
+                  {agentTokens && agentTokens.length > 0 && (
+                    <div className="flex min-w-0 flex-col gap-2">
+                      {agentTokens.map((token) => (
+                        <div
+                          key={token._id}
+                          className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border p-3"
+                        >
+                          <div className="flex min-w-0 flex-1 flex-col">
+                            <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                              {token.name}
+                              {token.revoked && (
+                                <Badge variant="outline">revoked</Badge>
+                              )}
+                            </span>
+                            <span className="font-mono text-xs break-all text-muted-foreground">
+                              {token.prefix}…
+                            </span>
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {token.isYours ? "yours" : token.ownerName} ·{" "}
+                            {token.lastUsedAt
+                              ? formatWhen(token.lastUsedAt)
+                              : "never used"}
                           </span>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {key.prefix}…
-                        </TableCell>
-                        <TableCell className="hidden text-muted-foreground sm:table-cell">
-                          {key.lastUsedAt ? formatWhen(key.lastUsedAt) : "never"}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            {!key.revoked && (
-                              <Button
-                                variant="ghost"
-                                size="xs"
-                                onClick={async () => {
-                                  try {
-                                    await revokeKey({ apiKeyId: key._id });
-                                    toast.add({ title: "Key revoked" });
-                                  } catch (caught) {
-                                    toast.add({
-                                      title: "Could not revoke",
-                                      description: readError(caught),
-                                      type: "error",
-                                    });
-                                  }
-                                }}
-                              >
-                                Revoke
-                              </Button>
-                            )}
+                          {!token.revoked && (
                             <Button
                               variant="ghost"
-                              size="icon-sm"
-                              aria-label="Delete key"
+                              size="xs"
                               onClick={async () => {
                                 try {
-                                  await removeKey({ apiKeyId: key._id });
-                                  toast.add({ title: "Key deleted" });
+                                  await revokeAgentToken({ tokenId: token._id });
+                                  toast.add({ title: "Agent URL revoked" });
                                 } catch (caught) {
                                   toast.add({
-                                    title: "Could not delete",
+                                    title: "Could not revoke",
                                     description: readError(caught),
                                     type: "error",
                                   });
                                 }
                               }}
                             >
-                              <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                              Revoke
                             </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* ---- MCP ---- */}
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <HugeiconsIcon
-                icon={AiBrain01Icon}
-                className="size-4 text-primary"
-                strokeWidth={2}
-              />
-              AI agents
-            </CardTitle>
-            <CardDescription>
-              Connect an agent over the Model Context Protocol. It signs in as a
-              Magic Forms account instead of carrying an API key, so it can do
-              exactly what that account can do here and nothing more.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex min-w-0 flex-col gap-4">
-            <Alert>
-              <HugeiconsIcon icon={RobotIcon} className="size-4" strokeWidth={2} />
-              <AlertTitle>
-                An agent signed in as you would be {role} in this workspace
-              </AlertTitle>
-              <AlertDescription>
-                {ROLE_BLURB[role]}
-                {me?.role === "admin" &&
-                  " You are platform staff as well, so it would also get the admin_* tools: provisioning companies and workspaces, and managing accounts."}
-              </AlertDescription>
-            </Alert>
-
-            <div className="flex min-w-0 flex-col gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <Label>Client configuration</Label>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(mcpConfig);
-                    toast.add({ title: "Configuration copied" });
-                  }}
-                >
-                  <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
-                  Copy
-                </Button>
-              </div>
-              <div className="overflow-x-auto rounded-lg bg-muted">
-                <pre className="p-3 text-xs leading-6">
-                  <code className="font-mono">{mcpConfig}</code>
-                </pre>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Point <code className="font-mono">args</code> at your checkout and
-                restart the client. Give the agent its own account rather than
-                your sign-in, and add it here at the lowest role that does the
-                job.
-              </p>
-            </div>
-
-            <div className="flex min-w-0 flex-col gap-2">
-              <Label>What it could do as you</Label>
-              {MCP_CAPABILITIES.map((capability) => {
-                const allowed =
-                  ROLE_RANK[role] >= ROLE_RANK[capability.needs];
-                return (
-                  <div
-                    key={capability.needs}
-                    className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-3"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <HugeiconsIcon
-                        icon={allowed ? CheckmarkCircle02Icon : MinusSignIcon}
-                        className={
-                          allowed
-                            ? "size-4 shrink-0 text-primary"
-                            : "size-4 shrink-0 text-muted-foreground"
-                        }
-                        strokeWidth={2}
-                      />
-                      <span className="text-sm font-medium">
-                        {capability.label}
-                      </span>
-                      <span className="sr-only">
-                        {allowed
-                          ? "available at your role"
-                          : "not available at your role"}
-                      </span>
-                      <Badge variant="outline" className="ml-auto">
-                        {capability.needs}
-                      </Badge>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    <p className="font-mono text-xs break-words text-muted-foreground">
-                      {capability.tools}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
+                  )}
+                </div>
+
+                <div className="flex min-w-0 flex-col gap-2">
+                  <Label>What it could do as you</Label>
+                  {MCP_CAPABILITIES.map((capability) => {
+                    const allowed =
+                      ROLE_RANK[role] >= ROLE_RANK[capability.needs];
+                    return (
+                      <div
+                        key={capability.needs}
+                        className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-3"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <HugeiconsIcon
+                            icon={allowed ? CheckmarkCircle02Icon : MinusSignIcon}
+                            className={
+                              allowed
+                                ? "size-4 shrink-0 text-primary"
+                                : "size-4 shrink-0 text-muted-foreground"
+                            }
+                            strokeWidth={2}
+                          />
+                          <span className="text-sm font-medium">
+                            {capability.label}
+                          </span>
+                          <span className="sr-only">
+                            {allowed
+                              ? "available at your role"
+                              : "not available at your role"}
+                          </span>
+                          <Badge variant="outline" className="ml-auto">
+                            {capability.needs}
+                          </Badge>
+                        </div>
+                        <p className="font-mono text-xs break-words text-muted-foreground">
+                          {capability.tools}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* ---- create key ---- */}
@@ -607,6 +658,121 @@ export default function ApiKeysPage() {
                 </Button>
                 <Button type="submit" disabled={creating}>
                   {creating ? "Creating…" : "Create key"}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ---- create agent URL ---- */}
+      <Dialog
+        open={agentDialogOpen}
+        onOpenChange={(open) => {
+          setAgentDialogOpen(open);
+          if (!open) {
+            setIssuedAgentUrl(null);
+            setAgentName("");
+          }
+        }}
+      >
+        <DialogContent>
+          {issuedAgentUrl ? (
+            <div className="flex min-w-0 flex-col gap-4">
+              <DialogHeader>
+                <DialogTitle>Copy your agent URL</DialogTitle>
+                <DialogDescription>
+                  This is the only time it will be shown.
+                </DialogDescription>
+              </DialogHeader>
+
+              <Alert>
+                <HugeiconsIcon icon={LockIcon} className="size-4" strokeWidth={2} />
+                <AlertTitle>Treat it like a password</AlertTitle>
+                <AlertDescription>
+                  Anyone with this URL can act as you. Revoke it if it leaks.
+                </AlertDescription>
+              </Alert>
+
+              <code className="rounded-lg bg-muted px-3 py-2.5 font-mono text-xs break-all">
+                {issuedAgentUrl}
+              </code>
+
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(issuedAgentUrl);
+                    toast.add({ title: "Agent URL copied" });
+                  }}
+                >
+                  <HugeiconsIcon icon={Copy01Icon} strokeWidth={2} />
+                  Copy URL
+                </Button>
+                <Button
+                  onClick={() => {
+                    setIssuedAgentUrl(null);
+                    setAgentName("");
+                    setAgentDialogOpen(false);
+                  }}
+                >
+                  Done
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                setCreatingAgent(true);
+                try {
+                  const result = await createAgentToken({
+                    workspaceId,
+                    name: agentName,
+                  });
+                  setIssuedAgentUrl(
+                    (origin || window.location.origin) +
+                      "/api/mcp/" +
+                      result.token,
+                  );
+                } catch (caught) {
+                  toast.add({
+                    title: "Could not create the URL",
+                    description: readError(caught),
+                    type: "error",
+                  });
+                } finally {
+                  setCreatingAgent(false);
+                }
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle>New agent URL</DialogTitle>
+                <DialogDescription>
+                  It will act as you — {role} in this workspace.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="agent-name">Name</Label>
+                <Input
+                  id="agent-name"
+                  required
+                  placeholder="Support copilot"
+                  value={agentName}
+                  onChange={(e) => setAgentName(e.target.value)}
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setAgentDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={creatingAgent}>
+                  {creatingAgent ? "Creating…" : "Create URL"}
                 </Button>
               </DialogFooter>
             </form>
