@@ -30,7 +30,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 
 export type StepDef = {
@@ -212,8 +211,21 @@ export function FormRenderer({ schema, preview = false }: Props) {
     setStepIndex((index) => Math.min(index + 1, steps.length - 1));
   }
 
-  async function onSubmit(event: React.FormEvent) {
+  /**
+   * The only way the form is submitted, whether by the primary button or by
+   * pressing Enter in a field. Routing here — rather than swapping the button
+   * between `type="button"` and `type="submit"` — is what stops the click that
+   * lands on the last step from also submitting it: a button whose `type`
+   * changes mid-click still runs the browser's submit default action.
+   */
+  async function onFormSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (submitting) return;
+    if (isLast) await onSubmit();
+    else await onNext();
+  }
+
+  async function onSubmit() {
     if (!validateCurrentStep()) return;
 
     if (preview) {
@@ -383,7 +395,7 @@ export function FormRenderer({ schema, preview = false }: Props) {
         )}
       </CardHeader>
 
-      <form onSubmit={onSubmit} noValidate>
+      <form onSubmit={onFormSubmit} noValidate>
         <CardContent className="flex flex-col gap-5">
           {formError && (
             <Alert variant="destructive">
@@ -417,31 +429,33 @@ export function FormRenderer({ schema, preview = false }: Props) {
           </div>
         </CardContent>
 
-        <Separator />
-
-        <CardFooter className="flex items-center justify-between gap-3 pt-4">
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={stepIndex === 0 || submitting}
-            onClick={() => setStepIndex((index) => Math.max(0, index - 1))}
-            className={stepIndex === 0 ? "invisible" : undefined}
-          >
-            <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} />
-            Back
-          </Button>
-
-          {isLast ? (
-            <Button type="submit" disabled={submitting}>
-              {submitting && <Spinner />}
-              {submitting ? "Submitting…" : schema.form.settings.submitLabel}
+        {/* CardFooter draws its own top border, so no Separator above it. */}
+        <CardFooter className="flex items-center justify-between gap-3">
+          {stepIndex > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={submitting}
+              onClick={() => setStepIndex((index) => Math.max(0, index - 1))}
+            >
+              <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} />
+              Back
             </Button>
           ) : (
-            <Button type="button" onClick={onNext} disabled={submitting}>
-              Continue
-              <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
-            </Button>
+            <span aria-hidden />
           )}
+
+          <Button type="submit" size="lg" disabled={submitting}>
+            {submitting && <Spinner />}
+            {submitting
+              ? "Submitting…"
+              : isLast
+                ? schema.form.settings.submitLabel
+                : "Continue"}
+            {!isLast && !submitting && (
+              <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
+            )}
+          </Button>
         </CardFooter>
       </form>
     </Card>

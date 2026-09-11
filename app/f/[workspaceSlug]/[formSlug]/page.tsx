@@ -58,6 +58,7 @@ export default function PublicFormPage() {
       </header>
 
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col px-4 py-8 sm:py-12">
+        <div className="my-auto flex w-full flex-col">
         {schema === undefined && (
           <Card>
             <CardContent className="flex flex-col gap-5 py-8">
@@ -109,7 +110,9 @@ export default function PublicFormPage() {
           <FormRenderer schema={schema as FormSchema} />
         )}
 
-        <footer className="mt-8 flex items-center justify-center">
+        </div>
+
+        <footer className="mt-8 flex shrink-0 items-center justify-center">
           <Link
             href="/"
             className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
