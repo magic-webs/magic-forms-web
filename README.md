@@ -181,9 +181,29 @@ who it signed in as: an account with the platform `admin` role also gets the
 `admin_*` tools. That is a convenience for the agent, not the security boundary
 — Convex re-checks the role on every call.
 
-### Setup
+### Hosted endpoint
 
-Put the account it should act as in `.env.local`, which is git-ignored:
+Create one under **API keys → AI agents** in any workspace. You get a URL:
+
+```
+https://forms.yourco.com/api/mcp/mf_mcp_...
+```
+
+Point any MCP client that speaks HTTP at it — nothing to install. The token is
+shown once, acts as the account that created it, and is revoked from the same
+screen. `Authorization: Bearer <token>` is honoured too, and is the better
+choice where a client supports headers, since URLs end up in logs.
+
+Redeeming a token mints the same short-lived access token a sign-in does, so
+every call underneath still goes through `requireWorkspaceAccess`. The redeemed
+credential is cached for up to a minute, which is also the longest a revoked
+token can keep working.
+
+### Running it yourself
+
+The same tools ship as a stdio server for anyone who would rather not hand a
+hosted endpoint their workspace. Put the account it should act as in
+`.env.local`, which is git-ignored:
 
 ```
 MAGIC_FORMS_EMAIL=agent@yourcompany.com
@@ -198,9 +218,10 @@ Real environment variables win over the file, so a deployed agent needs no
 node mcp/server.mjs --list
 ```
 
-`.mcp.json` in the repo root already registers the server for Claude Code and
-anything else reading that format. Clients wanting explicit config want
-`node mcp/server.mjs` run with this directory as the working directory.
+`.mcp.json` in the repo root already registers it for Claude Code and anything
+else reading that format. Clients wanting explicit config want
+`node mcp/server.mjs`; the server finds `.env.local` from its own location, so
+the working directory does not matter.
 
 ### Tools
 
@@ -291,6 +312,7 @@ convex/
   webhooks.ts        endpoints, signed delivery with retries, delivery log
   apiKeys.ts         hashed keys
   admin.ts           platform console, and company provisioning
+  mcpTokens.ts       tokens for the hosted MCP endpoint
   publicForms.ts     unauthenticated form rendering and submission
   api.ts             query/mutation backends for the REST endpoints
   cleanup.ts         batched cascade deletes, scheduled pruning
@@ -302,10 +324,15 @@ convex/
     validate.ts      server-side submission validation
 ```
 
+The tool definitions are shared: the stdio server and the hosted endpoint at
+`app/api/mcp/[token]/route.ts` both serve the same `mcp/tools/*` modules, and
+differ only in how they authenticate.
+
 ```
 mcp/
   server.mjs         stdio MCP server: signs in, gates tools by role, serves them
-  convex.mjs         the signed-in Convex session the tools run on
+  convex.mjs         the signed-in Convex session the stdio server runs on
+  api.mjs            Convex function references, shared by both transports
   schema.mjs         JSON Schema builders and the shared enums
   tools/
     workspace.mjs    whoami, workspaces, members

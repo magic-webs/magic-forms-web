@@ -232,6 +232,26 @@ export default defineSchema({
     .index("by_webhook", ["webhookId"])
     .index("by_workspace", ["workspaceId"]),
 
+  /**
+   * Tokens for the hosted MCP endpoint. A token acts as the account that
+   * created it and carries exactly that account's access — `workspaceId`
+   * records where it was created so it can be listed there, and does not
+   * narrow what the token can reach.
+   */
+  mcpTokens: defineTable({
+    userId: v.id("users"),
+    workspaceId: v.id("workspaces"),
+    name: v.string(),
+    /** First 12 chars, so a token can be recognised in the list. */
+    prefix: v.string(),
+    tokenHash: v.string(),
+    lastUsedAt: v.optional(v.number()),
+    revoked: v.boolean(),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_workspace", ["workspaceId"])
+    .index("by_user", ["userId"]),
+
   /** Keys for the read side of the public HTTP API. */
   apiKeys: defineTable({
     workspaceId: v.id("workspaces"),

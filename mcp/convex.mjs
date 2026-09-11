@@ -11,15 +11,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
-import { anyApi } from "convex/server";
+import { api } from "./api.mjs";
 
-/**
- * `convex/_generated/api.js` is exactly this, but importing it from outside a
- * bundler makes Node reparse it as a typeless module and warn on stderr — which
- * an MCP client reads. `anyApi` resolves `api.forms.create` to the same
- * reference by path.
- */
-export const api = anyApi;
+export { api };
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 

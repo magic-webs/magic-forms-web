@@ -5,7 +5,7 @@
  * `viewer` can read, `editor` can build, `admin` can manage members, and only
  * the `owner` can delete. The checks live in Convex, not here.
  */
-import { api } from "../convex.mjs";
+import { api } from "../api.mjs";
 import { MEMBER_ROLES, boolean, noArgs, object, oneOf, string } from "../schema.mjs";
 
 export const workspaceTools = [

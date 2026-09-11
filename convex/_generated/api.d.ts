@@ -21,6 +21,7 @@ import type * as lib_crypto from "../lib/crypto.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as lib_events from "../lib/events.js";
 import type * as lib_validate from "../lib/validate.js";
+import type * as mcpTokens from "../mcpTokens.js";
 import type * as publicForms from "../publicForms.js";
 import type * as submissions from "../submissions.js";
 import type * as webhooks from "../webhooks.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   "lib/errors": typeof lib_errors;
   "lib/events": typeof lib_events;
   "lib/validate": typeof lib_validate;
+  mcpTokens: typeof mcpTokens;
   publicForms: typeof publicForms;
   submissions: typeof submissions;
   webhooks: typeof webhooks;

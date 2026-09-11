@@ -6,7 +6,7 @@
  * a single call. The granular tools below it are for editing what already
  * exists, and all of them need at least the workspace `editor` role.
  */
-import { api } from "../convex.mjs";
+import { api } from "../api.mjs";
 import {
   FIELD_TYPES,
   FORM_STATUSES,

@@ -6,7 +6,7 @@
  * enforces the same rule again on every call, so hiding them is a courtesy to
  * the agent, not the security boundary.
  */
-import { api } from "../convex.mjs";
+import { api } from "../api.mjs";
 import { boolean, noArgs, object, oneOf, string } from "../schema.mjs";
 
 export const adminTools = [

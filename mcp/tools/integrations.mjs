@@ -5,7 +5,7 @@
  * by the call that mints it, and is never recoverable afterwards — hand it
  * straight to whoever asked for it rather than storing it.
  */
-import { api } from "../convex.mjs";
+import { api } from "../api.mjs";
 import {
   WEBHOOK_EVENTS,
   arrayOf,

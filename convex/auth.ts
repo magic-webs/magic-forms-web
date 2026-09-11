@@ -161,7 +161,7 @@ export const deleteSession = internalMutation({
 });
 
 /** Mints the RS256 token the Convex client sends on every subsequent call. */
-async function mintAccessToken(userId: Id<"users">, role: string) {
+export async function mintAccessToken(userId: Id<"users">, role: string) {
   const privateKey = process.env.JWT_PRIVATE_KEY;
   const keyId = process.env.JWT_KID;
   const siteUrl = process.env.CONVEX_SITE_URL;
