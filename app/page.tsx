@@ -11,7 +11,6 @@ import {
   Database01Icon,
   Layers01Icon,
   Link03Icon,
-  MagicWand01Icon,
   Mail01Icon,
   RadioButtonIcon,
   SlidersHorizontalIcon,
@@ -21,6 +20,7 @@ import {
   WebhookIcon,
 } from "@hugeicons/core-free-icons";
 
+import { Logo } from "@/components/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -112,9 +112,7 @@ export default function LandingPage() {
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-md">
         <nav className="mx-auto flex h-14 w-full max-w-6xl items-center gap-3 px-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <HugeiconsIcon icon={MagicWand01Icon} className="size-4" strokeWidth={2} />
-            </span>
+            <Logo size={28} priority />
             <span className="text-sm font-semibold tracking-tight">Magic Forms</span>
           </Link>
 
@@ -419,9 +417,7 @@ export default function LandingPage() {
             className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,var(--primary)_0%,transparent_55%)] opacity-[0.12]"
           />
           <div className="relative mx-auto flex w-full max-w-3xl flex-col items-center gap-6 px-4 py-20 text-center sm:px-6">
-            <span className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <HugeiconsIcon icon={MagicWand01Icon} className="size-5" strokeWidth={2} />
-            </span>
+            <Logo size={56} />
             <h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
               Your first form is minutes away
             </h2>
@@ -442,9 +438,7 @@ export default function LandingPage() {
       <footer className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
         <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
           <div className="flex items-center gap-2">
-            <span className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <HugeiconsIcon icon={MagicWand01Icon} className="size-3.5" strokeWidth={2} />
-            </span>
+            <Logo size={24} />
             <span className="text-sm font-medium">Magic Forms</span>
           </div>
           <p className="text-xs text-muted-foreground">

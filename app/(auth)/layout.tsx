@@ -1,9 +1,8 @@
 import Link from "next/link";
 import { HugeiconsIcon } from "@hugeicons/react";
-import {
-  CheckmarkCircle02Icon,
-  MagicWand01Icon,
-} from "@hugeicons/core-free-icons";
+import { CheckmarkCircle02Icon } from "@hugeicons/core-free-icons";
+
+import { Logo } from "@/components/logo";
 
 const HIGHLIGHTS = [
   "23 field types, from short answer to file upload",
@@ -22,9 +21,7 @@ export default function AuthLayout({ children }: LayoutProps<"/">) {
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,var(--primary)_0%,transparent_50%)] opacity-[0.12]"
         />
         <Link href="/" className="relative flex items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <HugeiconsIcon icon={MagicWand01Icon} className="size-4" strokeWidth={2} />
-          </span>
+          <Logo size={28} priority />
           <span className="text-sm font-semibold tracking-tight">Magic Forms</span>
         </Link>
 
@@ -55,9 +52,7 @@ export default function AuthLayout({ children }: LayoutProps<"/">) {
       <div className="flex flex-1 flex-col">
         <div className="flex items-center justify-between p-4 lg:hidden">
           <Link href="/" className="flex items-center gap-2">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <HugeiconsIcon icon={MagicWand01Icon} className="size-4" strokeWidth={2} />
-            </span>
+            <Logo size={28} priority />
             <span className="text-sm font-semibold tracking-tight">Magic Forms</span>
           </Link>
         </div>

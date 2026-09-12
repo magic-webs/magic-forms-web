@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { MagicWand01Icon, Note04Icon } from "@hugeicons/core-free-icons";
+import { Note04Icon } from "@hugeicons/core-free-icons";
 
 import { api } from "@/convex/_generated/api";
+import { Logo } from "@/components/logo";
 import { FormRenderer, FormSchema } from "@/components/form-renderer";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,11 +29,7 @@ function PoweredBy() {
         href="/"
         className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
       >
-        <HugeiconsIcon
-          icon={MagicWand01Icon}
-          className="size-3.5"
-          strokeWidth={2}
-        />
+        <Logo size={14} />
         Powered by Magic Forms
       </Link>
     </div>

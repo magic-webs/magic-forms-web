@@ -74,6 +74,7 @@ Environment variables:
 | --- | --- | --- |
 | `CONVEX_DEPLOY_KEY` | production deploy key | Convex dashboard → Settings → Deploy keys. This is what targets prod; keep it secret |
 | `NEXT_PUBLIC_CONVEX_SITE_URL` | `https://<deployment>.convex.site` | The `.site` domain, not `.cloud`. Nothing injects this — it backs the API endpoints shown in the UI |
+| `NEXT_PUBLIC_SITE_URL` | `https://<your-domain>` | The app's own public origin. Only used as `metadataBase`, but without it `og:image` resolves against `localhost` and link previews break |
 
 `NEXT_PUBLIC_CONVEX_URL` is supplied by `convex deploy --cmd`, so do not set it
 by hand. Do **not** set `CONVEX_DEPLOYMENT` on Vercel — that variable selects
@@ -358,3 +359,25 @@ primitives. The three app-level compositions are `components/app-sidebar.tsx`
 (the workspace sidebar), `components/field-control.tsx` (renders one field of any
 type) and `components/form-renderer.tsx` (the multi-step form used by both the
 public page and the builder preview).
+
+### Brand assets
+
+`public/images/logo.png` is the only hand-maintained image. Every favicon, app
+icon and social card is derived from it:
+
+```
+npm run brand:assets      # node scripts/generate-brand-assets.mjs
+```
+
+That writes `app/favicon.ico` (16/32/48 — the 16px slice is cropped to just the
+document, because the full mark turns to mush at that size), `app/icon.png`,
+`app/apple-icon.png`, `app/opengraph-image.png`, `app/twitter-image.png`, the
+`public/icons/*` sizes that `app/manifest.ts` points at, and
+`public/images/logo-mark.png`. Do not hand-edit those — replace `logo.png` and
+re-run.
+
+In the product, always render `components/logo.tsx` rather than an icon or a
+raw `<img>`; it is the one place the mark's sizing and loading behaviour lives.
+Next.js picks up `favicon.ico`, `icon.png` and `apple-icon.png` from `app/` by
+file convention, so `metadata.icons` is deliberately **not** set in
+`app/layout.tsx` — setting it suppresses those conventions.

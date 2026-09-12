@@ -11,7 +11,6 @@ import {
   Key01Icon,
   Layers01Icon,
   Logout02Icon,
-  MagicWand01Icon,
   Note04Icon,
   SecurityCheckIcon,
   Settings02Icon,
@@ -23,6 +22,7 @@ import {
 
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
+import { Logo } from "@/components/logo";
 import { useSession } from "@/components/providers";
 import { initials, readError } from "@/lib/format";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -143,13 +143,7 @@ export function AppSidebar() {
                     />
                   }
                 >
-                  <span className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                    <HugeiconsIcon
-                      icon={MagicWand01Icon}
-                      className="size-4"
-                      strokeWidth={2}
-                    />
-                  </span>
+                  <Logo size={32} />
                   <span className="grid flex-1 text-left leading-tight">
                     <span className="truncate text-sm font-semibold">
                       {active?.name ?? "Magic Forms"}

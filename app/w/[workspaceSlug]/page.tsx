@@ -8,11 +8,11 @@ import {
   ArrowRight02Icon,
   Building02Icon,
   Layers01Icon,
-  MagicWand01Icon,
   Note04Icon,
 } from "@hugeicons/core-free-icons";
 
 import { api } from "@/convex/_generated/api";
+import { Logo } from "@/components/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,9 +41,7 @@ export default function WorkspaceDirectoryPage() {
     <div className="flex min-h-svh flex-1 flex-col bg-muted/30">
       <header className="border-b bg-background">
         <div className="mx-auto flex h-14 w-full max-w-3xl items-center gap-2 px-4">
-          <span className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <HugeiconsIcon icon={MagicWand01Icon} className="size-3.5" strokeWidth={2} />
-          </span>
+          <Logo size={24} />
           <span className="truncate text-sm font-medium">
             {directory?.workspace.name ?? "Forms"}
           </span>
@@ -174,7 +172,7 @@ export default function WorkspaceDirectoryPage() {
             href="/"
             className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
-            <HugeiconsIcon icon={MagicWand01Icon} className="size-3.5" strokeWidth={2} />
+            <Logo size={14} />
             Powered by Magic Forms
           </Link>
         </footer>

@@ -6,6 +6,8 @@ import { useQuery } from "convex/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Building02Icon, MagicWand01Icon } from "@hugeicons/core-free-icons";
 
+import { Logo } from "@/components/logo";
+
 import { api } from "@/convex/_generated/api";
 import {
   Empty,
@@ -43,6 +45,7 @@ export default function AppHomePage() {
       <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
         <SidebarTrigger />
         <Separator orientation="vertical" className="mr-1 h-4" />
+        <Logo size={20} />
         <span className="text-sm font-medium">Magic Forms</span>
       </header>
 
