@@ -60,7 +60,13 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -557,6 +563,23 @@ function WebhookForm({
   const [formId, setFormId] = React.useState<string>(initial?.formId ?? "");
   const [saving, setSaving] = React.useState(false);
 
+  /**
+   * Scope options, with `null` standing for the whole workspace. Base UI counts
+   * an empty string as *nothing selected* and would show a placeholder, so the
+   * "every form" choice has to be a null-valued item with its own label — then
+   * the trigger reads it back instead of falling through to placeholder text.
+   */
+  const scopeItems = React.useMemo(
+    () => [
+      { value: null as string | null, label: "Every form in the workspace" },
+      ...forms.map((form) => ({
+        value: form._id as string | null,
+        label: "Only: " + form.title,
+      })),
+    ],
+    [forms],
+  );
+
   function toggle(event: WebhookEvent, on: boolean) {
     setEvents((current) =>
       on ? [...current, event] : current.filter((item) => item !== event),
@@ -611,18 +634,27 @@ function WebhookForm({
 
       <div className="flex flex-col gap-2">
         <Label htmlFor="hook-form">Scope</Label>
-        <NativeSelect
-          id="hook-form"
-          value={formId}
-          onChange={(e) => setFormId(e.target.value)}
+        <Select
+          items={scopeItems}
+          value={formId === "" ? null : formId}
+          onValueChange={(next) => setFormId(next === null ? "" : String(next))}
         >
-          <NativeSelectOption value="">Every form in the workspace</NativeSelectOption>
-          {forms.map((form) => (
-            <NativeSelectOption key={form._id} value={form._id}>
-              Only: {form.title}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
+          {/* Workspace-wide is a real scope, not an unanswered field, so it
+              keeps the normal text colour Base UI mutes for a null value. */}
+          <SelectTrigger
+            id="hook-form"
+            className="w-full data-placeholder:text-foreground"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {scopeItems.map((item) => (
+              <SelectItem key={item.value ?? "all"} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <Separator />

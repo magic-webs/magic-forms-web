@@ -83,7 +83,13 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Sheet,
   SheetContent,
@@ -167,6 +173,13 @@ const TYPE_LABEL: Record<string, string> = Object.fromEntries(
 const CHOICE_TYPES = ["select", "multiselect", "radio", "checkboxGroup"];
 const STATIC_TYPES = ["heading", "paragraph", "divider"];
 const TEXTY_TYPES = ["text", "textarea", "email", "phone", "url", "password"];
+
+/** How wide a field sits in the six-column grid. */
+const WIDTH_ITEMS = [
+  { value: "full", label: "Full width" },
+  { value: "half", label: "Half width" },
+  { value: "third", label: "One third" },
+] as const;
 
 export default function FormBuilderPage() {
   const params = useParams<{ workspaceId: string; formId: string }>();
@@ -843,6 +856,22 @@ function ConditionEditor({
   const source = sources.find((candidate) => candidate.key === value?.fieldKey);
   const needsValues = value !== null && VALUE_OPERATORS.includes(value.operator);
 
+  /**
+   * "Always show this" is a real choice, not an absent one, so it is a
+   * null-valued item carrying its own label. Base UI reads an empty string as
+   * *nothing selected* and would show placeholder text in the trigger instead.
+   */
+  const sourceItems = React.useMemo(
+    () => [
+      { value: null as string | null, label: "Always show this " + subject },
+      ...sources.map((candidate) => ({
+        value: candidate.key as string | null,
+        label: "Only when “" + candidate.label + "” …",
+      })),
+    ],
+    [sources, subject],
+  );
+
   if (sources.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
@@ -853,43 +882,55 @@ function ConditionEditor({
 
   return (
     <div className="flex flex-col gap-3">
-      <NativeSelect
-        aria-label={"When to show this " + subject}
-        value={value?.fieldKey ?? ""}
-        onChange={(event) =>
+      <Select
+        items={sourceItems}
+        value={value?.fieldKey ?? null}
+        onValueChange={(next) =>
           onChange(
-            event.target.value === ""
+            next === null
               ? null
-              : { fieldKey: event.target.value, operator: "anyOf", values: [] },
+              : { fieldKey: String(next), operator: "anyOf", values: [] },
           )
         }
       >
-        <NativeSelectOption value="">Always show this {subject}</NativeSelectOption>
-        {sources.map((candidate) => (
-          <NativeSelectOption key={candidate.key} value={candidate.key}>
-            Only when “{candidate.label}” …
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
+        <SelectTrigger
+          aria-label={"When to show this " + subject}
+          className="w-full"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {sourceItems.map((item) => (
+            <SelectItem key={item.value ?? "always"} value={item.value}>
+              {item.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       {value && (
         <>
-          <NativeSelect
-            aria-label="Comparison"
+          <Select
+            items={OPERATOR_LABEL}
             value={value.operator}
-            onChange={(event) =>
+            onValueChange={(next) =>
               onChange({
                 ...value,
-                operator: event.target.value as ConditionOperator,
+                operator: next as ConditionOperator,
               })
             }
           >
-            {OPERATORS.map((operator) => (
-              <NativeSelectOption key={operator} value={operator}>
-                {OPERATOR_LABEL[operator]}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+            <SelectTrigger aria-label="Comparison" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OPERATORS.map((operator) => (
+                <SelectItem key={operator} value={operator}>
+                  {OPERATOR_LABEL[operator]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {needsValues &&
             (source && source.options.length > 0 ? (
@@ -1061,6 +1102,16 @@ function FieldInspector({
   const isTexty = TEXTY_TYPES.includes(field.type);
   const isNumeric = ["number", "slider", "rating"].includes(field.type);
 
+  /** Numbered so the picker reads in the same order as the canvas. */
+  const stepItems = React.useMemo(
+    () =>
+      steps.map((step, index) => ({
+        value: step._id as string,
+        label: index + 1 + ". " + step.title,
+      })),
+    [steps],
+  );
+
   function setRule(patch: Partial<typeof validation>) {
     setValidation((current) => ({ ...current, ...patch }));
   }
@@ -1186,15 +1237,22 @@ function FieldInspector({
 
         <div className="flex flex-col gap-2">
           <Label htmlFor="insp-width">Width</Label>
-          <NativeSelect
-            id="insp-width"
+          <Select
+            items={WIDTH_ITEMS}
             value={width}
-            onChange={(e) => setWidth(e.target.value as typeof width)}
+            onValueChange={(next) => setWidth(next as typeof width)}
           >
-            <NativeSelectOption value="full">Full width</NativeSelectOption>
-            <NativeSelectOption value="half">Half width</NativeSelectOption>
-            <NativeSelectOption value="third">One third</NativeSelectOption>
-          </NativeSelect>
+            <SelectTrigger id="insp-width" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {WIDTH_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {/* ---- options editor ---- */}
@@ -1386,23 +1444,28 @@ function FieldInspector({
             <Separator />
             <div className="flex flex-col gap-2">
               <Label htmlFor="insp-step">Move to step</Label>
-              <NativeSelect
-                id="insp-step"
+              <Select
+                items={stepItems}
                 value={field.stepId}
-                onChange={(e) =>
+                onValueChange={(next) =>
                   moveField({
                     fieldId: field._id,
-                    targetStepId: e.target.value as Id<"steps">,
+                    targetStepId: next as Id<"steps">,
                     targetIndex: 999,
                   })
                 }
               >
-                {steps.map((step, index) => (
-                  <NativeSelectOption key={step._id} value={step._id}>
-                    {index + 1}. {step.title}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
+                <SelectTrigger id="insp-step" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {stepItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </>
         )}

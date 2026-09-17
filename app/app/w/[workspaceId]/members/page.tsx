@@ -33,7 +33,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -55,6 +61,13 @@ const ROLES: { value: MemberRole; label: string; hint: string }[] = [
   { value: "editor", label: "Editor", hint: "Builds forms and manages responses" },
   { value: "viewer", label: "Viewer", hint: "Read-only access" },
 ];
+
+/**
+ * The roles a member can be moved to. Ownership transfers are a separate
+ * operation, so "owner" is never on offer — and an owner's row shows a badge
+ * rather than this picker, so their role is always one of these.
+ */
+const ASSIGNABLE_ROLES = ROLES.filter((role) => role.value !== "owner");
 
 export default function MembersPage() {
   const params = useParams<{ workspaceId: string }>();
@@ -147,14 +160,14 @@ export default function MembersPage() {
                           </TableCell>
                           <TableCell>
                             {canManage && !isOwner ? (
-                              <NativeSelect
-                                aria-label="Role"
+                              <Select
+                                items={ASSIGNABLE_ROLES}
                                 value={member.role}
-                                onChange={async (e) => {
+                                onValueChange={async (next) => {
                                   try {
                                     await updateRole({
                                       memberId: member._id,
-                                      role: e.target.value as MemberRole,
+                                      role: next as MemberRole,
                                     });
                                     toast.add({ title: "Role updated" });
                                   } catch (caught) {
@@ -166,12 +179,17 @@ export default function MembersPage() {
                                   }
                                 }}
                               >
-                                {ROLES.filter((r) => r.value !== "owner").map((r) => (
-                                  <NativeSelectOption key={r.value} value={r.value}>
-                                    {r.label}
-                                  </NativeSelectOption>
-                                ))}
-                              </NativeSelect>
+                                <SelectTrigger aria-label="Role" className="w-32">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {ASSIGNABLE_ROLES.map((r) => (
+                                    <SelectItem key={r.value} value={r.value}>
+                                      {r.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             ) : (
                               <Badge variant={isOwner ? "default" : "secondary"}>
                                 {member.role}
@@ -275,17 +293,29 @@ export default function MembersPage() {
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="member-role">Role</Label>
-              <NativeSelect
-                id="member-role"
+              <Select
+                items={ASSIGNABLE_ROLES}
                 value={role}
-                onChange={(e) => setRole(e.target.value as MemberRole)}
+                onValueChange={(next) => setRole(next as MemberRole)}
               >
-                {ROLES.filter((r) => r.value !== "owner").map((r) => (
-                  <NativeSelectOption key={r.value} value={r.value}>
-                    {r.label} — {r.hint}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
+                <SelectTrigger id="member-role" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {/* The trigger shows the bare label; the hint only has room
+                      to be spelled out here, where a row can wrap. */}
+                  {ASSIGNABLE_ROLES.map((r) => (
+                    <SelectItem key={r.value} value={r.value} className="py-1.5">
+                      <span className="flex flex-col gap-0.5 whitespace-normal">
+                        <span>{r.label}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {r.hint}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>

@@ -422,3 +422,13 @@ export const RANGES = [
   { days: 30, label: "Last 30 days" },
   { days: 90, label: "Last 90 days" },
 ] as const;
+
+/**
+ * `RANGES` in the shape `<Select items>` wants. Built once rather than inline,
+ * so the three admin pages that show this picker share one array instead of
+ * allocating a fresh one on every render.
+ */
+export const RANGE_ITEMS = RANGES.map((range) => ({
+  value: range.days,
+  label: range.label,
+}));

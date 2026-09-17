@@ -14,14 +14,20 @@ import { AdminHeader } from "@/components/admin-header";
 import {
   bucketByDay,
   DailyChart,
-  RANGES,
+  RANGE_ITEMS,
   StatCard,
   useHourlyNow,
 } from "@/components/admin-stats";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -33,6 +39,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
+
+/** Passed to `<Select items>` so the trigger shows the role's label. */
+const PLATFORM_ROLES = [
+  { value: "user", label: "User" },
+  { value: "admin", label: "Admin" },
+] as const;
 
 export default function AdminAccountsPage() {
   const [days, setDays] = React.useState<number>(30);
@@ -86,18 +98,22 @@ export default function AdminAccountsPage() {
   return (
     <>
       <AdminHeader title="Accounts">
-        <NativeSelect
-          aria-label="Date range"
-          className="w-40"
-          value={String(days)}
-          onChange={(e) => setDays(Number(e.target.value))}
+        <Select
+          items={RANGE_ITEMS}
+          value={days}
+          onValueChange={(next) => setDays(Number(next))}
         >
-          {RANGES.map((range) => (
-            <NativeSelectOption key={range.days} value={String(range.days)}>
-              {range.label}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
+          <SelectTrigger aria-label="Date range" className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {RANGE_ITEMS.map((range) => (
+              <SelectItem key={range.value} value={range.value}>
+                {range.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </AdminHeader>
 
       <div className="flex min-w-0 flex-1 flex-col gap-6 p-4 sm:p-6">
@@ -204,28 +220,35 @@ export default function AdminAccountsPage() {
                             {user.workspaceCount}
                           </TableCell>
                           <TableCell>
-                            <NativeSelect
-                              aria-label="Platform role"
+                            <Select
+                              items={PLATFORM_ROLES}
                               value={user.role}
                               disabled={user._id === me?._id}
-                              onChange={(e) =>
+                              onValueChange={(next) =>
                                 guard(
                                   () =>
                                     setUserRole({
                                       userId: user._id,
-                                      role: e.target.value as "admin" | "user",
+                                      role: next as "admin" | "user",
                                     }),
                                   "Role updated",
                                 )
                               }
                             >
-                              <NativeSelectOption value="user">
-                                User
-                              </NativeSelectOption>
-                              <NativeSelectOption value="admin">
-                                Admin
-                              </NativeSelectOption>
-                            </NativeSelect>
+                              <SelectTrigger
+                                aria-label="Platform role"
+                                className="w-32"
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {PLATFORM_ROLES.map((role) => (
+                                  <SelectItem key={role.value} value={role.value}>
+                                    {role.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </TableCell>
                           <TableCell className="text-right">
                             <Switch

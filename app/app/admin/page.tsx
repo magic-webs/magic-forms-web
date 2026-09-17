@@ -17,11 +17,17 @@ import { AdminHeader } from "@/components/admin-header";
 import {
   CategoryChart,
   DailyChart,
-  RANGES,
+  RANGE_ITEMS,
   StatCard,
   useHourlyNow,
 } from "@/components/admin-stats";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export default function AdminStatsPage() {
   const [days, setDays] = React.useState<number>(30);
@@ -39,18 +45,22 @@ export default function AdminStatsPage() {
   return (
     <>
       <AdminHeader title="Platform stats">
-        <NativeSelect
-          aria-label="Date range"
-          className="w-40"
-          value={String(days)}
-          onChange={(e) => setDays(Number(e.target.value))}
+        <Select
+          items={RANGE_ITEMS}
+          value={days}
+          onValueChange={(next) => setDays(Number(next))}
         >
-          {RANGES.map((range) => (
-            <NativeSelectOption key={range.days} value={String(range.days)}>
-              {range.label}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
+          <SelectTrigger aria-label="Date range" className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {RANGE_ITEMS.map((range) => (
+              <SelectItem key={range.value} value={range.value}>
+                {range.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </AdminHeader>
 
       <div className="flex min-w-0 flex-1 flex-col gap-6 p-4 sm:p-6">
