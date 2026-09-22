@@ -8,7 +8,6 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
   ArrowRight02Icon,
   Folder01Icon,
-  Layers01Icon,
   Note04Icon,
 } from "@hugeicons/core-free-icons";
 
@@ -156,26 +155,16 @@ export default function GroupChooserPage() {
                       className="flex cursor-pointer items-start gap-3 rounded-xl border bg-background p-4 transition-colors hover:border-primary/40 has-data-checked:border-primary has-data-checked:ring-3 has-data-checked:ring-primary/20"
                     >
                       <RadioGroupItem value={form.slug} className="mt-0.5" />
+                      {/* The name is the choice. A description shows only when
+                          the form's author wrote one — no filler, and no
+                          step or question counts to read past. */}
                       <span className="flex min-w-0 flex-col gap-1">
                         <span className="font-medium">{form.title}</span>
-                        <span className="text-sm text-muted-foreground">
-                          {form.description || "Open the form to get started."}
-                        </span>
-                        <span className="flex items-center gap-3 pt-0.5 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <HugeiconsIcon
-                              icon={Layers01Icon}
-                              className="size-3.5"
-                              strokeWidth={2}
-                            />
-                            {form.stepCount}{" "}
-                            {form.stepCount === 1 ? "step" : "steps"}
+                        {form.description && (
+                          <span className="text-sm text-muted-foreground">
+                            {form.description}
                           </span>
-                          <span>
-                            {form.fieldCount}{" "}
-                            {form.fieldCount === 1 ? "question" : "questions"}
-                          </span>
-                        </span>
+                        )}
                       </span>
                     </label>
                   ))}

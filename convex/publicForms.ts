@@ -177,29 +177,16 @@ export const getGroupDirectory = query({
       .withIndex("by_group", (q) => q.eq("groupId", group._id))
       .take(100);
 
-    const rows = await Promise.all(
-      forms
-        .filter((form) => form.status === "published")
-        .map(async (form) => {
-          const fields = await ctx.db
-            .query("fields")
-            .withIndex("by_form", (q) => q.eq("formId", form._id))
-            .take(300);
-          const steps = await ctx.db
-            .query("steps")
-            .withIndex("by_form_and_order", (q) => q.eq("formId", form._id))
-            .take(50);
-          return {
-            title: form.title,
-            slug: form.slug,
-            description: form.description ?? null,
-            fieldCount: fields.filter(
-              (f) => !["heading", "paragraph", "divider"].includes(f.type),
-            ).length,
-            stepCount: steps.length,
-          };
-        }),
-    );
+    // Title and description only: the chooser shows nothing else, and reading
+    // every field of every form to count them made a 13-form group read
+    // thousands of documents to render a line of grey text.
+    const rows = forms
+      .filter((form) => form.status === "published")
+      .map((form) => ({
+        title: form.title,
+        slug: form.slug,
+        description: form.description ?? null,
+      }));
 
     return {
       workspace: {

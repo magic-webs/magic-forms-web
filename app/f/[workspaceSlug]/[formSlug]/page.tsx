@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Note04Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeft02Icon, Note04Icon } from "@hugeicons/core-free-icons";
 
 import { api } from "@/convex/_generated/api";
 import { readPrefillFromSearch } from "@/convex/lib/prefill";
@@ -144,27 +144,25 @@ export default function PublicFormPage() {
         <div className="mx-auto flex h-12 w-full max-w-2xl items-center gap-2 px-4 sm:h-14 sm:px-6">
           {schema ? (
             <>
-              <Link
-                href={`/w/${schema.workspace.slug}`}
-                className="truncate text-sm font-medium hover:underline"
-              >
-                {schema.workspace.name}
-              </Link>
-              {/* A form reached through a group's chooser gets a way back to
-                  it, in case the wrong option was picked. */}
+              {/* A form reached through a group's chooser keeps a way back to
+                  it, in case the wrong option was picked. An arrow rather than
+                  a breadcrumb: the name in the bar is the form you are on. */}
               {schema.group && (
-                <>
-                  <span className="text-muted-foreground" aria-hidden="true">
-                    /
-                  </span>
-                  <Link
-                    href={`/g/${schema.workspace.slug}/${schema.group.slug}`}
-                    className="truncate text-sm text-muted-foreground hover:underline"
-                  >
-                    {schema.group.name}
-                  </Link>
-                </>
+                <Link
+                  href={`/g/${schema.workspace.slug}/${schema.group.slug}`}
+                  aria-label={"Back to " + schema.group.name}
+                  className="-ml-1 shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <HugeiconsIcon
+                    icon={ArrowLeft02Icon}
+                    className="size-4"
+                    strokeWidth={2}
+                  />
+                </Link>
               )}
+              <span className="truncate text-sm font-medium">
+                {schema.form.title}
+              </span>
             </>
           ) : (
             <Skeleton className="h-4 w-32" />
