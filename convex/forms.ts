@@ -96,6 +96,7 @@ export const listByWorkspace = query({
           _id: form._id,
           title: form.title,
           slug: form.slug,
+          groupId: form.groupId ?? null,
           description: form.description,
           status: form.status,
           submissionCount: form.submissionCount,
@@ -123,9 +124,21 @@ export const getWithSchema = query({
       .withIndex("by_form", (q) => q.eq("formId", form._id))
       .take(300);
 
+    const group = form.groupId
+      ? await ctx.db.get("formGroups", form.groupId)
+      : null;
+
     return {
       form,
       role,
+      group: group
+        ? {
+            _id: group._id,
+            name: group.name,
+            slug: group.slug,
+            publicPage: group.publicPage,
+          }
+        : null,
       workspace: { _id: workspace._id, name: workspace.name, slug: workspace.slug },
       steps: steps
         .sort((a, b) => a.order - b.order)
@@ -144,6 +157,8 @@ export const create = mutation({
     workspaceId: v.id("workspaces"),
     title: v.string(),
     description: v.optional(v.string()),
+    /** Drops the new form straight into a group's public chooser. */
+    groupId: v.optional(v.id("formGroups")),
   },
   returns: v.id("forms"),
   handler: async (ctx, args) => {
@@ -152,11 +167,18 @@ export const create = mutation({
       args.workspaceId,
       "editor",
     );
+    if (args.groupId) {
+      const group = await ctx.db.get("formGroups", args.groupId);
+      if (!group || group.workspaceId !== args.workspaceId) {
+        userError("That group is not in this workspace.");
+      }
+    }
     const title = args.title.trim() || "Untitled form";
     const slug = await uniqueFormSlug(ctx, args.workspaceId, title);
 
     const formId = await ctx.db.insert("forms", {
       workspaceId: args.workspaceId,
+      groupId: args.groupId,
       title,
       description: args.description?.trim() || undefined,
       slug,
@@ -272,20 +294,35 @@ export const setStatus = mutation({
   },
 });
 
-/** Deep-copies a form, its steps and its fields into a new draft. */
+/**
+ * Deep-copies a form, its steps and its fields into a new draft.
+ *
+ * The copy lands in the same group as its original — the usual reason to
+ * duplicate is to offer a variant of it in the same chooser — unless the caller
+ * names a different one.
+ */
 export const duplicate = mutation({
-  args: { formId: v.id("forms") },
+  args: {
+    formId: v.id("forms"),
+    title: v.optional(v.string()),
+    groupId: v.optional(v.union(v.id("formGroups"), v.null())),
+  },
   returns: v.id("forms"),
   handler: async (ctx, args) => {
     const { form, user } = await requireFormAccess(ctx, args.formId, "editor");
-    const slug = await uniqueFormSlug(
-      ctx,
-      form.workspaceId,
-      form.title + " copy",
-    );
+    if (args.groupId) {
+      const group = await ctx.db.get("formGroups", args.groupId);
+      if (!group || group.workspaceId !== form.workspaceId) {
+        userError("That group is not in this workspace.");
+      }
+    }
+    const title = args.title?.trim() || form.title + " (copy)";
+    const slug = await uniqueFormSlug(ctx, form.workspaceId, title);
     const newFormId = await ctx.db.insert("forms", {
       workspaceId: form.workspaceId,
-      title: form.title + " (copy)",
+      groupId:
+        args.groupId === undefined ? form.groupId : (args.groupId ?? undefined),
+      title,
       description: form.description,
       slug,
       status: "draft",

@@ -8,6 +8,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
   Building02Icon,
+  Folder01Icon,
   Key01Icon,
   Layers01Icon,
   Logout02Icon,
@@ -69,6 +70,7 @@ import { toast } from "@/components/ui/toast";
 const NAV = [
   { slug: "", label: "Overview", icon: Layers01Icon },
   { slug: "forms", label: "Forms", icon: Note04Icon },
+  { slug: "groups", label: "Groups", icon: Folder01Icon },
   { slug: "responses", label: "Responses", icon: Building02Icon },
   { slug: "webhooks", label: "Webhooks", icon: WebhookIcon },
   { slug: "api", label: "API keys", icon: Key01Icon },

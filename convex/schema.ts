@@ -136,8 +136,29 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_workspace_and_user", ["workspaceId", "userId"]),
 
+  /**
+   * A named set of related forms with its own shareable link. The public group
+   * page lets someone pick the form that applies to them and continue into it,
+   * which is what turns "here are five links" into one link to hand out.
+   */
+  formGroups: defineTable({
+    workspaceId: v.id("workspaces"),
+    name: v.string(),
+    slug: v.string(),
+    description: v.optional(v.string()),
+    /** Headline shown above the chooser on the public group page. */
+    chooserPrompt: v.optional(v.string()),
+    /** Off means the group is dashboard-only: its public link 404s. */
+    publicPage: v.boolean(),
+    createdBy: v.id("users"),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_and_slug", ["workspaceId", "slug"]),
+
   forms: defineTable({
     workspaceId: v.id("workspaces"),
+    /** Absent means the form is ungrouped. */
+    groupId: v.optional(v.id("formGroups")),
     title: v.string(),
     description: v.optional(v.string()),
     slug: v.string(),
@@ -163,7 +184,8 @@ export default defineSchema({
   })
     .index("by_workspace", ["workspaceId"])
     .index("by_workspace_and_slug", ["workspaceId", "slug"])
-    .index("by_workspace_and_status", ["workspaceId", "status"]),
+    .index("by_workspace_and_status", ["workspaceId", "status"])
+    .index("by_group", ["groupId"]),
 
   /** A form is always at least one step; multi-step forms have many. */
   steps: defineTable({
@@ -214,10 +236,24 @@ export default defineSchema({
     userAgent: v.optional(v.string()),
     referrer: v.optional(v.string()),
     read: v.boolean(),
+    /**
+     * Every answer laid out as one WhatsApp-ready message, built at submit
+     * time. Stored rather than derived so the message keeps the labels the
+     * person actually saw, even after the form is edited — and so the text a
+     * webhook delivered is byte-for-byte the text the magic link shows.
+     */
+    formattedText: v.optional(v.string()),
+    /**
+     * Bearer capability for `/s/<token>`: whoever holds the link can read this
+     * one submission without signing in. That is the point — it travels inside
+     * the WhatsApp message so the details are one tap away.
+     */
+    viewToken: v.optional(v.string()),
   })
     .index("by_form", ["formId"])
     .index("by_workspace", ["workspaceId"])
-    .index("by_form_and_read", ["formId", "read"]),
+    .index("by_form_and_read", ["formId", "read"])
+    .index("by_viewToken", ["viewToken"]),
 
   /** A webhook scoped to a whole workspace, or to one form when formId is set. */
   webhooks: defineTable({

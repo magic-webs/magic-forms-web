@@ -9,6 +9,7 @@ import {
   Add01Icon,
   Copy01Icon,
   Delete02Icon,
+  Folder01Icon,
   Layers01Icon,
   Link03Icon,
   MoreHorizontalIcon,
@@ -57,6 +58,10 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -76,15 +81,33 @@ export default function FormsPage() {
 
   const workspace = useQuery(api.workspaces.get, { workspaceId });
   const forms = useQuery(api.forms.listByWorkspace, { workspaceId });
+  const groups = useQuery(api.formGroups.listByWorkspace, { workspaceId });
   const createForm = useMutation(api.forms.create);
   const duplicateForm = useMutation(api.forms.duplicate);
   const removeForm = useMutation(api.forms.remove);
+  const setFormGroup = useMutation(api.formGroups.setFormGroup);
 
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
+  const [newFormGroup, setNewFormGroup] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [pendingDelete, setPendingDelete] = React.useState<Id<"forms"> | null>(null);
+  /** `""` = every form, `"none"` = ungrouped, otherwise a group id. */
+  const [groupFilter, setGroupFilter] = React.useState("");
+  const [moving, setMoving] = React.useState<Id<"forms"> | null>(null);
+  const [moveTarget, setMoveTarget] = React.useState("none");
+
+  const groupNames = React.useMemo(
+    () => new Map((groups ?? []).map((group) => [group._id, group.name])),
+    [groups],
+  );
+
+  const visible = (forms ?? []).filter((form) => {
+    if (groupFilter === "") return true;
+    if (groupFilter === "none") return form.groupId === null;
+    return form.groupId === groupFilter;
+  });
 
   async function onCreate(event: React.FormEvent) {
     event.preventDefault();
@@ -94,13 +117,42 @@ export default function FormsPage() {
         workspaceId,
         title,
         description: description.trim() || undefined,
+        groupId: newFormGroup ? (newFormGroup as Id<"formGroups">) : undefined,
       });
       setDialogOpen(false);
       setTitle("");
       setDescription("");
+      setNewFormGroup("");
       router.push(`/app/w/${workspaceId}/forms/${formId}`);
     } catch (caught) {
       toast.add({ title: "Could not create form", description: readError(caught), type: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onMove(event: React.FormEvent) {
+    event.preventDefault();
+    if (!moving) return;
+    setBusy(true);
+    try {
+      await setFormGroup({
+        formId: moving,
+        groupId: moveTarget === "none" ? null : (moveTarget as Id<"formGroups">),
+      });
+      toast.add({
+        title:
+          moveTarget === "none"
+            ? "Form removed from its group"
+            : "Form moved to " + (groupNames.get(moveTarget as Id<"formGroups">) ?? "the group"),
+      });
+      setMoving(null);
+    } catch (caught) {
+      toast.add({
+        title: "Could not move the form",
+        description: readError(caught),
+        type: "error",
+      });
     } finally {
       setBusy(false);
     }
@@ -115,6 +167,23 @@ export default function FormsPage() {
         <Badge variant="secondary" className="ml-1 tabular-nums">
           {forms?.length ?? 0}
         </Badge>
+        {groups && groups.length > 0 && (
+          <NativeSelect
+            size="sm"
+            aria-label="Filter by group"
+            className="ml-2 hidden max-w-44 sm:block"
+            value={groupFilter}
+            onChange={(e) => setGroupFilter(e.target.value)}
+          >
+            <NativeSelectOption value="">All groups</NativeSelectOption>
+            <NativeSelectOption value="none">Ungrouped</NativeSelectOption>
+            {groups.map((group) => (
+              <NativeSelectOption key={group._id} value={group._id}>
+                {group.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        )}
         <Button size="sm" className="ml-auto" onClick={() => setDialogOpen(true)}>
           <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
           <span className="hidden sm:inline">New form</span>
@@ -151,15 +220,47 @@ export default function FormsPage() {
           </Empty>
         )}
 
-        {forms && forms.length > 0 && (
+        {forms && forms.length > 0 && visible.length === 0 && (
+          <Empty className="flex-1">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
+              </EmptyMedia>
+              <EmptyTitle>No forms in this group</EmptyTitle>
+              <EmptyDescription>
+                Nothing here yet. Create a form into it, or move an existing one
+                across from the Groups page.
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button variant="outline" onClick={() => setGroupFilter("")}>
+                Show every form
+              </Button>
+            </EmptyContent>
+          </Empty>
+        )}
+
+        {visible.length > 0 && (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {forms.map((form) => {
+            {visible.map((form) => {
               const publicPath = workspace ? `/f/${workspace.slug}/${form.slug}` : "";
               return (
                 <Card key={form._id} className="flex flex-col">
                   <CardHeader>
                     <div className="flex items-start justify-between gap-2">
-                      <Badge variant={STATUS_VARIANT[form.status]}>{form.status}</Badge>
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        <Badge variant={STATUS_VARIANT[form.status]}>{form.status}</Badge>
+                        {form.groupId && (
+                          <Badge variant="outline" className="max-w-36 truncate">
+                            <HugeiconsIcon
+                              icon={Folder01Icon}
+                              className="size-3"
+                              strokeWidth={2}
+                            />
+                            {groupNames.get(form.groupId) ?? "Group"}
+                          </Badge>
+                        )}
+                      </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger
                           render={<Button variant="ghost" size="icon-sm" />}
@@ -216,6 +317,15 @@ export default function FormsPage() {
                           >
                             <HugeiconsIcon icon={Copy01Icon} className="size-4" strokeWidth={2} />
                             Duplicate
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setMoving(form._id);
+                              setMoveTarget(form.groupId ?? "none");
+                            }}
+                          >
+                            <HugeiconsIcon icon={Folder01Icon} className="size-4" strokeWidth={2} />
+                            Move to group…
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
@@ -310,12 +420,78 @@ export default function FormsPage() {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
+            {groups && groups.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="form-group">Group</Label>
+                <NativeSelect
+                  id="form-group"
+                  className="w-full"
+                  value={newFormGroup}
+                  onChange={(e) => setNewFormGroup(e.target.value)}
+                >
+                  <NativeSelectOption value="">No group</NativeSelectOption>
+                  {groups.map((group) => (
+                    <NativeSelectOption key={group._id} value={group._id}>
+                      {group.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                <p className="text-xs text-muted-foreground">
+                  A grouped form also appears in that group&apos;s shared
+                  chooser once published.
+                </p>
+              </div>
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
                 Cancel
               </Button>
               <Button type="submit" disabled={busy}>
                 {busy ? "Creating…" : "Create form"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ---- move to group ---- */}
+      <Dialog open={moving !== null} onOpenChange={(open) => !open && setMoving(null)}>
+        <DialogContent>
+          <form onSubmit={onMove} className="flex flex-col gap-4">
+            <DialogHeader>
+              <DialogTitle>Move to group</DialogTitle>
+              <DialogDescription>
+                A form belongs to one group at a time. Its own link keeps
+                working either way.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="move-group">Group</Label>
+              <NativeSelect
+                id="move-group"
+                className="w-full"
+                value={moveTarget}
+                onChange={(e) => setMoveTarget(e.target.value)}
+              >
+                <NativeSelectOption value="none">No group</NativeSelectOption>
+                {(groups ?? []).map((group) => (
+                  <NativeSelectOption key={group._id} value={group._id}>
+                    {group.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              {groups?.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  There are no groups yet — create one on the Groups page first.
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setMoving(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy ? "Moving…" : "Move form"}
               </Button>
             </DialogFooter>
           </form>

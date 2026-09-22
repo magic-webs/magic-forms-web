@@ -2,7 +2,13 @@ import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, QueryCtx, MutationCtx } from "./_generated/server";
 import { visibleFields } from "./lib/conditions";
+import { randomToken } from "./lib/crypto";
 import { dispatchEvent } from "./lib/events";
+import {
+  buildSubmissionText,
+  submissionLines,
+  submissionViewUrl,
+} from "./lib/submissionText";
 import { serialiseField, validateSubmission } from "./lib/validate";
 
 /**
@@ -46,8 +52,16 @@ export async function buildFormSchema(
     .withIndex("by_form", (q) => q.eq("formId", form._id))
     .take(300);
 
+  // Only a group with a live public page is named here — it becomes a "back to
+  // the chooser" link, and a dashboard-only group has nowhere to go back to.
+  const group = form.groupId ? await ctx.db.get("formGroups", form.groupId) : null;
+
   return {
     workspace: { name: workspace.name, slug: workspace.slug },
+    group:
+      group && group.publicPage
+        ? { name: group.name, slug: group.slug }
+        : null,
     form: {
       id: form._id,
       title: form.title,
@@ -131,6 +145,144 @@ export const getWorkspaceDirectory = query({
         description: workspace.description ?? null,
       },
       forms: rows,
+    };
+  },
+});
+
+/**
+ * The public chooser behind a group's shareable link.
+ *
+ * Only published forms are listed: a group is a front door, and a draft has no
+ * business being behind it.
+ */
+export const getGroupDirectory = query({
+  args: { workspaceSlug: v.string(), groupSlug: v.string() },
+  handler: async (ctx, args) => {
+    const workspace = await ctx.db
+      .query("workspaces")
+      .withIndex("by_slug", (q) => q.eq("slug", args.workspaceSlug))
+      .unique();
+    if (!workspace || workspace.archived) return null;
+
+    const group = await ctx.db
+      .query("formGroups")
+      .withIndex("by_workspace_and_slug", (q) =>
+        q.eq("workspaceId", workspace._id).eq("slug", args.groupSlug),
+      )
+      .unique();
+    if (!group || !group.publicPage) return null;
+
+    const forms = await ctx.db
+      .query("forms")
+      .withIndex("by_group", (q) => q.eq("groupId", group._id))
+      .take(100);
+
+    const rows = await Promise.all(
+      forms
+        .filter((form) => form.status === "published")
+        .map(async (form) => {
+          const fields = await ctx.db
+            .query("fields")
+            .withIndex("by_form", (q) => q.eq("formId", form._id))
+            .take(300);
+          const steps = await ctx.db
+            .query("steps")
+            .withIndex("by_form_and_order", (q) => q.eq("formId", form._id))
+            .take(50);
+          return {
+            title: form.title,
+            slug: form.slug,
+            description: form.description ?? null,
+            fieldCount: fields.filter(
+              (f) => !["heading", "paragraph", "divider"].includes(f.type),
+            ).length,
+            stepCount: steps.length,
+          };
+        }),
+    );
+
+    return {
+      workspace: {
+        name: workspace.name,
+        slug: workspace.slug,
+        publicDirectory: workspace.publicDirectory,
+      },
+      group: {
+        name: group.name,
+        slug: group.slug,
+        description: group.description ?? null,
+        chooserPrompt: group.chooserPrompt ?? null,
+      },
+      forms: rows.sort((a, b) => a.title.localeCompare(b.title)),
+    };
+  },
+});
+
+/**
+ * One submission, resolved by the token in its magic link.
+ *
+ * Unauthenticated on purpose: the token *is* the credential, and it only ever
+ * travels in the notification sent to the form's own workspace. Nothing here
+ * reveals anything about the workspace beyond this single response.
+ */
+export const getSubmissionByToken = query({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    // Short tokens can only be a mistyped link; don't let one probe the index.
+    if (args.token.length < 16) return null;
+
+    const submission = await ctx.db
+      .query("submissions")
+      .withIndex("by_viewToken", (q) => q.eq("viewToken", args.token))
+      .unique();
+    if (!submission) return null;
+
+    const form = await ctx.db.get("forms", submission.formId);
+    const workspace = await ctx.db.get("workspaces", submission.workspaceId);
+    if (!form || !workspace) return null;
+
+    const steps = await ctx.db
+      .query("steps")
+      .withIndex("by_form_and_order", (q) => q.eq("formId", form._id))
+      .take(50);
+    const fields = await ctx.db
+      .query("fields")
+      .withIndex("by_form", (q) => q.eq("formId", form._id))
+      .take(300);
+
+    const files = await Promise.all(
+      submission.files.map(async (file) => ({
+        key: file.key,
+        name: file.name,
+        size: file.size,
+        url: await ctx.storage.getUrl(file.storageId),
+      })),
+    );
+
+    return {
+      workspace: { name: workspace.name, slug: workspace.slug },
+      form: { title: form.title, slug: form.slug },
+      submittedAt: submission._creationTime,
+      source: submission.source,
+      rows: submissionLines({
+        steps,
+        fields,
+        data: submission.data,
+        files: submission.files,
+      }),
+      files,
+      // Older submissions predate the stored text; rebuilding it keeps the
+      // page useful for them, just without the link it would already contain.
+      formattedText:
+        submission.formattedText ??
+        buildSubmissionText({
+          formTitle: form.title,
+          steps,
+          fields,
+          data: submission.data,
+          files: submission.files,
+          submittedAt: submission._creationTime,
+        }),
     };
   },
 });
@@ -252,6 +404,20 @@ export async function submitToForm(
 
   const files = args.files.filter((file) => shownKeys.has(file.key));
 
+  // The magic link has to exist before the message that carries it, so the
+  // token is minted here and the text is built around it.
+  const viewToken = randomToken(24);
+  const viewUrl = submissionViewUrl(viewToken);
+  const formattedText = buildSubmissionText({
+    formTitle: args.form.title,
+    steps,
+    fields,
+    data: cleaned,
+    files,
+    viewUrl,
+    submittedAt: Date.now(),
+  });
+
   const submissionId = await ctx.db.insert("submissions", {
     formId: args.form._id,
     workspaceId: args.workspace._id,
@@ -261,6 +427,8 @@ export async function submitToForm(
     userAgent: args.userAgent,
     referrer: args.referrer,
     read: false,
+    formattedText,
+    viewToken,
   });
 
   await ctx.db.patch("forms", args.form._id, {
@@ -279,6 +447,9 @@ export async function submitToForm(
       source: args.source,
       data: cleaned,
       files: args.files.map((f) => ({ key: f.key, name: f.name, size: f.size })),
+      /** Ready to forward to WhatsApp as-is — labels, answers and the link. */
+      formattedText,
+      viewUrl,
     },
   });
 

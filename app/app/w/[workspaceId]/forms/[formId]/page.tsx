@@ -687,6 +687,7 @@ export default function FormBuilderPage() {
             publicPath={publicPath}
             workspaceSlug={workspace.slug}
             formSlug={form.slug}
+            group={data.group}
           />
         </TabsContent>
       </Tabs>
@@ -1686,11 +1687,13 @@ function SharePanel({
   publicPath,
   workspaceSlug,
   formSlug,
+  group,
 }: {
   status: string;
   publicPath: string;
   workspaceSlug: string;
   formSlug: string;
+  group: { name: string; slug: string; publicPage: boolean } | null;
 }) {
   // window.location is only readable after mount; the server render has no origin.
   const [origin, setOrigin] = React.useState("");
@@ -1715,6 +1718,20 @@ function SharePanel({
       icon: Layers01Icon,
     },
   ];
+
+  // One link for the whole group: it opens a chooser, and this form is one of
+  // the options on it.
+  if (group && group.publicPage) {
+    rows.push({
+      label: "Group link",
+      description:
+        "Offers every published form in " +
+        group.name +
+        " — the visitor picks one and continues.",
+      value: origin + "/g/" + workspaceSlug + "/" + group.slug,
+      icon: Layers01Icon,
+    });
+  }
 
   const apiRows = [
     {

@@ -72,7 +72,13 @@ export const purgeWorkspace = internalMutation({
       return null;
     }
 
-    const scoped = ["members", "webhooks", "apiKeys", "mcpTokens"] as const;
+    const scoped = [
+      "members",
+      "webhooks",
+      "apiKeys",
+      "mcpTokens",
+      "formGroups",
+    ] as const;
     for (const table of scoped) {
       const rows = await ctx.db
         .query(table)

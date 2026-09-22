@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { buildFormSchema, submitToForm } from "./publicForms";
+import { submissionViewUrl } from "./lib/submissionText";
 import { MULTI_TYPES, STATIC_TYPES, parseList } from "./lib/validate";
 
 /**
@@ -170,6 +171,12 @@ export const submissionsForApi = internalQuery({
             name: f.name,
             size: f.size,
           })),
+          // The same chat-ready text the `submission.created` webhook carries,
+          // so a consumer polling this endpoint can forward it just as easily.
+          formattedText: submission.formattedText ?? null,
+          viewUrl: submission.viewToken
+            ? submissionViewUrl(submission.viewToken)
+            : null,
         };
       }),
     );

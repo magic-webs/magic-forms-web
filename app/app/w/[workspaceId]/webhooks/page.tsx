@@ -85,7 +85,11 @@ import { toast } from "@/components/ui/toast";
 type WebhookEvent = Doc<"webhooks">["events"][number];
 
 const EVENTS: { value: WebhookEvent; label: string; hint: string }[] = [
-  { value: "submission.created", label: "submission.created", hint: "A response was submitted" },
+  {
+    value: "submission.created",
+    label: "submission.created",
+    hint: "A response was submitted — payload carries formattedText and viewUrl, ready to send to WhatsApp",
+  },
   { value: "submission.updated", label: "submission.updated", hint: "A response changed" },
   { value: "submission.deleted", label: "submission.deleted", hint: "A response was removed" },
   { value: "form.created", label: "form.created", hint: "A new form was created" },

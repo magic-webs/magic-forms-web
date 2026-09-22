@@ -127,12 +127,29 @@ export default function PublicFormPage() {
       <header className="shrink-0 border-b">
         <div className="mx-auto flex h-12 w-full max-w-2xl items-center gap-2 px-4 sm:h-14 sm:px-6">
           {schema ? (
-            <Link
-              href={`/w/${schema.workspace.slug}`}
-              className="truncate text-sm font-medium hover:underline"
-            >
-              {schema.workspace.name}
-            </Link>
+            <>
+              <Link
+                href={`/w/${schema.workspace.slug}`}
+                className="truncate text-sm font-medium hover:underline"
+              >
+                {schema.workspace.name}
+              </Link>
+              {/* A form reached through a group's chooser gets a way back to
+                  it, in case the wrong option was picked. */}
+              {schema.group && (
+                <>
+                  <span className="text-muted-foreground" aria-hidden="true">
+                    /
+                  </span>
+                  <Link
+                    href={`/g/${schema.workspace.slug}/${schema.group.slug}`}
+                    className="truncate text-sm text-muted-foreground hover:underline"
+                  >
+                    {schema.group.name}
+                  </Link>
+                </>
+              )}
+            </>
           ) : (
             <Skeleton className="h-4 w-32" />
           )}
