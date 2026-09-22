@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { buildFormSchema, submitToForm } from "./publicForms";
+import { isPrefillable, serialisePrefillField } from "./lib/prefill";
 import { submissionViewUrl } from "./lib/submissionText";
 import { MULTI_TYPES, STATIC_TYPES, parseList } from "./lib/validate";
 
@@ -59,6 +60,110 @@ export const workspaceFormsBySlug = internalQuery({
         slug: form.slug,
         description: form.description ?? null,
       })),
+    };
+  },
+});
+
+/**
+ * Everything needed to build a prefilled link to one form: where it lives, and
+ * which of its fields a link may fill in.
+ *
+ * Scoped to the workspace the API key belongs to, so a key can never address a
+ * form in someone else's workspace by guessing its slug.
+ */
+export const formLinkForApi = internalQuery({
+  args: { workspaceId: v.id("workspaces"), formSlug: v.string() },
+  handler: async (ctx, args) => {
+    const workspace = await ctx.db.get("workspaces", args.workspaceId);
+    if (!workspace || workspace.archived) return null;
+    const form = await ctx.db
+      .query("forms")
+      .withIndex("by_workspace_and_slug", (q) =>
+        q.eq("workspaceId", workspace._id).eq("slug", args.formSlug),
+      )
+      .unique();
+    if (!form) return null;
+
+    const fields = await ctx.db
+      .query("fields")
+      .withIndex("by_form", (q) => q.eq("formId", form._id))
+      .take(300);
+    const steps = await ctx.db
+      .query("steps")
+      .withIndex("by_form_and_order", (q) => q.eq("formId", form._id))
+      .take(50);
+    const stepOrder = new Map(steps.map((s) => [s._id, s.order]));
+
+    return {
+      workspace: { name: workspace.name, slug: workspace.slug },
+      form: {
+        id: form._id,
+        title: form.title,
+        slug: form.slug,
+        status: form.status,
+      },
+      fields: fields
+        .filter((f) => isPrefillable(f.type))
+        .sort((a, b) => {
+          const sa = stepOrder.get(a.stepId) ?? 0;
+          const sb = stepOrder.get(b.stepId) ?? 0;
+          return sa === sb ? a.order - b.order : sa - sb;
+        })
+        .map(serialisePrefillField),
+      /** Named so a caller knows why a `file` field is missing above. */
+      notPrefillable: fields
+        .filter((f) => !isPrefillable(f.type) && f.type === "file")
+        .map((f) => f.key),
+    };
+  },
+});
+
+/** The same, for a group link: every published form behind one address. */
+export const groupLinkForApi = internalQuery({
+  args: { workspaceId: v.id("workspaces"), groupSlug: v.string() },
+  handler: async (ctx, args) => {
+    const workspace = await ctx.db.get("workspaces", args.workspaceId);
+    if (!workspace || workspace.archived) return null;
+    const group = await ctx.db
+      .query("formGroups")
+      .withIndex("by_workspace_and_slug", (q) =>
+        q.eq("workspaceId", workspace._id).eq("slug", args.groupSlug),
+      )
+      .unique();
+    if (!group) return null;
+
+    const forms = await ctx.db
+      .query("forms")
+      .withIndex("by_group", (q) => q.eq("groupId", group._id))
+      .take(100);
+
+    const rows = await Promise.all(
+      forms
+        .filter((form) => form.status === "published")
+        .sort((a, b) => a.title.localeCompare(b.title))
+        .map(async (form) => {
+          const fields = await ctx.db
+            .query("fields")
+            .withIndex("by_form", (q) => q.eq("formId", form._id))
+            .take(300);
+          return {
+            title: form.title,
+            slug: form.slug,
+            fields: fields
+              .filter((f) => isPrefillable(f.type))
+              .map(serialisePrefillField),
+          };
+        }),
+    );
+
+    return {
+      workspace: { name: workspace.name, slug: workspace.slug },
+      group: {
+        name: group.name,
+        slug: group.slug,
+        publicPage: group.publicPage,
+      },
+      forms: rows,
     };
   },
 });

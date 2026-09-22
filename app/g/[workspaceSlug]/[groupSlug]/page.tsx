@@ -47,7 +47,10 @@ export default function GroupChooserPage() {
 
   function onContinue() {
     if (!group || !chosen) return;
-    router.push(`/f/${group.workspace.slug}/${chosen}`);
+    // A prefilled group link carries its values on to whichever form is
+    // picked; the form drops the parameters it has no field for.
+    const search = typeof window === "undefined" ? "" : window.location.search;
+    router.push(`/f/${group.workspace.slug}/${chosen}${search}`);
   }
 
   return (

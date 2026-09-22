@@ -146,14 +146,23 @@ function safeList(raw: string): string[] {
   }
 }
 
-function initialValues(steps: StepDef[]): Record<string, string> {
+function initialValues(
+  steps: StepDef[],
+  prefill?: Record<string, string>,
+): Record<string, string> {
   const values: Record<string, string> = {};
   for (const step of steps) {
     for (const field of step.fields) {
       if (STATIC_FIELD_TYPES.includes(field.type)) continue;
-      values[field.key] = LIST_FIELD_TYPES.includes(field.type)
-        ? (field.defaultValue ?? "[]")
-        : (field.defaultValue ?? "");
+      // A prefilled value beats the field's default — it is the more specific
+      // of the two, and it is why the link was built.
+      const supplied = prefill?.[field.key];
+      values[field.key] =
+        supplied !== undefined
+          ? supplied
+          : LIST_FIELD_TYPES.includes(field.type)
+            ? (field.defaultValue ?? "[]")
+            : (field.defaultValue ?? "");
     }
   }
   return values;
@@ -171,6 +180,12 @@ type Props = {
   fullScreen?: boolean;
   /** Sits at the foot of the scrolling area in `fullScreen`, above the buttons. */
   brand?: React.ReactNode;
+  /**
+   * Values to start the form with, keyed by field key — what a prefilled link
+   * carries. They are ordinary answers from here on: editable, validated, and
+   * dropped if their branch never shows.
+   */
+  prefill?: Record<string, string>;
 };
 
 export function FormRenderer({
@@ -178,6 +193,7 @@ export function FormRenderer({
   preview = false,
   fullScreen = false,
   brand,
+  prefill,
 }: Props) {
   const submit = useMutation(api.publicForms.submit);
   const generateUploadUrl = useMutation(api.publicForms.generateUploadUrl);
@@ -188,7 +204,7 @@ export function FormRenderer({
   // start pointing at a different step.
   const [stepId, setStepId] = React.useState<string | null>(null);
   const [values, setValues] = React.useState<Record<string, string>>(() =>
-    initialValues(schema.steps),
+    initialValues(schema.steps, prefill),
   );
   const [files, setFiles] = React.useState<Record<string, File>>({});
   const [errors, setErrors] = React.useState<Record<string, string>>({});
@@ -399,7 +415,9 @@ export function FormRenderer({
           variant="outline"
           onClick={() => {
             setDone(null);
-            setValues(initialValues(schema.steps));
+            // "Submit another" goes back to the link's own starting point, so
+            // a prefilled link still knows who it is on the second response.
+            setValues(initialValues(schema.steps, prefill));
             setFiles({});
             setErrors({});
             setStepId(null);

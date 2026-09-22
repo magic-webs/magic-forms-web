@@ -12,6 +12,7 @@ import {
   Copy01Icon,
   Delete02Icon,
   Key01Icon,
+  Link03Icon,
   LockIcon,
   MinusSignIcon,
   RobotIcon,
@@ -185,7 +186,31 @@ export default function ApiKeysPage() {
     {
       method: "GET",
       path: "/api/v1/submissions?form={formSlug}&limit=50",
-      body: "Reads stored responses for this workspace.",
+      body: "Reads stored responses for this workspace. Each response includes formattedText and viewUrl.",
+      auth: true,
+    },
+    {
+      method: "GET",
+      path: `/api/v1/links/form/${slug}/{formSlug}`,
+      body: "Returns the form link and every field a prefilled link may fill in.",
+      auth: true,
+    },
+    {
+      method: "POST",
+      path: `/api/v1/links/form/${slug}/{formSlug}`,
+      body: "Builds a prefilled form link from the values you send.",
+      auth: true,
+    },
+    {
+      method: "GET",
+      path: `/api/v1/links/group/${slug}/{groupSlug}`,
+      body: "Returns the group's chooser link and the prefillable fields of every published form behind it.",
+      auth: true,
+    },
+    {
+      method: "POST",
+      path: `/api/v1/links/group/${slug}/{groupSlug}`,
+      body: "Builds a prefilled group link. The values follow whichever form the visitor picks.",
       auth: true,
     },
   ];
@@ -228,7 +253,9 @@ export default function ApiKeysPage() {
               <CardContent className="flex min-w-0 flex-col gap-3">
                 {endpoints.map((endpoint) => (
                   <div
-                    key={endpoint.path}
+                    // Method included: the link endpoints answer both GET and
+                    // POST on one path, and a path-only key collides.
+                    key={endpoint.method + " " + endpoint.path}
                     className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-3"
                   >
                     <div className="flex flex-wrap items-center gap-2">
@@ -270,6 +297,127 @@ export default function ApiKeysPage() {
   -H 'content-type: application/json' \\
   -d '{ "full_name": "Ada Lovelace", "use_cases": ["Onboarding"] }'`}</code>
                   </pre>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* ---- prefilled links ---- */}
+            <Card className="mt-4 min-w-0">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <HugeiconsIcon icon={Link03Icon} className="size-4 text-primary" strokeWidth={2} />
+                  Prefilled links
+                </CardTitle>
+                <CardDescription>
+                  Hand someone a link with their answers already in it. The
+                  values arrive as ordinary query parameters, so they are
+                  editable and validated on submit exactly as if typed. Both
+                  endpoints need an API key.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex min-w-0 flex-col gap-4">
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs font-medium">
+                    1 · Ask which fields a link can fill
+                  </p>
+                  <div className="overflow-x-auto rounded-lg bg-muted">
+                    <pre className="p-3 text-xs leading-6">
+                      <code className="font-mono">{`curl ${siteUrl}/api/v1/links/form/${slug}/{formSlug} \\
+  -H 'authorization: Bearer mf_live_...'
+
+{
+  "url": "${origin}/f/${slug}/{formSlug}",
+  "prefill": {
+    "accepts": [
+      { "key": "full_name", "label": "Full name",    "type": "text",  "required": true,  "multiple": false },
+      { "key": "phone",     "label": "Phone number", "type": "phone", "required": false, "multiple": false },
+      { "key": "team",      "label": "Team",         "type": "select","required": false, "multiple": false,
+        "options": [{ "label": "Engineering", "value": "eng" }] }
+    ],
+    "notPrefillable": ["resume"]
+  }
+}`}</code>
+                    </pre>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs font-medium">2 · Build the link</p>
+                  <div className="overflow-x-auto rounded-lg bg-muted">
+                    <pre className="p-3 text-xs leading-6">
+                      <code className="font-mono">{`curl -X POST ${siteUrl}/api/v1/links/form/${slug}/{formSlug} \\
+  -H 'authorization: Bearer mf_live_...' \\
+  -H 'content-type: application/json' \\
+  -d '{ "data": { "full_name": "Asha Menon", "phone": "+91 98765 43210", "team": "eng" } }'
+
+{
+  "url": "${origin}/f/${slug}/{formSlug}?full_name=Asha+Menon&phone=%2B91+98765+43210&team=eng",
+  "prefilled": ["full_name", "phone", "team"]
+}`}</code>
+                    </pre>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs font-medium">
+                    3 · Or prefill a whole group
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    A group link opens the chooser. The values you send follow
+                    whichever form the visitor picks, and the response also
+                    returns a direct link per form, each carrying only the
+                    values that form actually has a field for.
+                  </p>
+                  <div className="overflow-x-auto rounded-lg bg-muted">
+                    <pre className="p-3 text-xs leading-6">
+                      <code className="font-mono">{`curl -X POST ${siteUrl}/api/v1/links/group/${slug}/{groupSlug} \\
+  -H 'authorization: Bearer mf_live_...' \\
+  -H 'content-type: application/json' \\
+  -d '{ "data": { "full_name": "Asha Menon", "phone": "+91 98765 43210" } }'
+
+{
+  "url": "${origin}/g/${slug}/{groupSlug}?full_name=Asha+Menon&phone=%2B91+98765+43210",
+  "forms": [
+    { "slug": "employee-onboarding",   "url": "${origin}/f/${slug}/employee-onboarding?full_name=Asha+Menon&phone=..." },
+    { "slug": "contractor-onboarding", "url": "${origin}/f/${slug}/contractor-onboarding?full_name=Asha+Menon" }
+  ]
+}`}</code>
+                    </pre>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5 rounded-lg border p-3 text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground">Rules</p>
+                  <p>
+                    Send a list for a multi-select field:{" "}
+                    <code className="font-mono">
+                      {'"interests": ["a", "b"]'}
+                    </code>
+                    . Checkboxes and switches take{" "}
+                    <code className="font-mono">true</code> or{" "}
+                    <code className="font-mono">false</code>.
+                  </p>
+                  <p>
+                    A choice field only accepts one of its own option values —
+                    a wrong one is rejected with <code className="font-mono">422</code>{" "}
+                    when the link is built, not in front of the person filling
+                    it in. An unknown key is rejected the same way.
+                  </p>
+                  <p>
+                    File fields cannot be prefilled; they are listed under{" "}
+                    <code className="font-mono">notPrefillable</code>. Hidden
+                    fields can, which is how a CRM id or campaign tag rides
+                    along into the response.
+                  </p>
+                  <p>
+                    Links are built from{" "}
+                    <code className="font-mono">APP_URL</code> on the Convex
+                    deployment. Set it with{" "}
+                    <code className="font-mono">
+                      npx convex env set APP_URL {origin || "https://your-app"}
+                    </code>
+                    .
+                  </p>
                 </div>
               </CardContent>
             </Card>

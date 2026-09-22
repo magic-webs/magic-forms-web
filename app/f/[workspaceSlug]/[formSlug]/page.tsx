@@ -8,6 +8,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Note04Icon } from "@hugeicons/core-free-icons";
 
 import { api } from "@/convex/_generated/api";
+import { readPrefillFromSearch } from "@/convex/lib/prefill";
 import { Logo } from "@/components/logo";
 import { FormRenderer, FormSchema } from "@/components/form-renderer";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,21 @@ export default function PublicFormPage() {
       recordView({ workspaceSlug, formSlug }).catch(() => {});
     }
   }, [schema, recordView, workspaceSlug, formSlug]);
+
+  /**
+   * Values carried by a prefilled link, e.g. `?full_name=Asha+Menon`.
+   *
+   * Read straight off `window.location` rather than through `useSearchParams`:
+   * the renderer only ever mounts after the Convex query resolves, which is
+   * client-side, so there is no server snapshot to disagree with. Unknown
+   * parameters — `utm_source` and the like — are dropped by the reader.
+   */
+  const prefill = React.useMemo(() => {
+    if (!schema || typeof window === "undefined") return undefined;
+    const fields = schema.steps.flatMap((step) => step.fields);
+    const values = readPrefillFromSearch(window.location.search, fields);
+    return Object.keys(values).length > 0 ? values : undefined;
+  }, [schema]);
 
   const live = schema && schema.form.status === "published";
 
@@ -162,6 +178,7 @@ export default function PublicFormPage() {
             schema={schema as FormSchema}
             fullScreen
             brand={<PoweredBy />}
+            prefill={prefill}
           />
         ) : (
           message

@@ -1,7 +1,14 @@
 import { httpRouter } from "convex/server";
 import { internal } from "./_generated/api";
-import { httpAction } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
+import { ActionCtx, httpAction } from "./_generated/server";
 import { sha256 } from "./lib/crypto";
+import {
+  buildPrefillParams,
+  PrefillField,
+  toQueryString,
+} from "./lib/prefill";
+import { appBaseUrl } from "./lib/submissionText";
 
 const http = httpRouter();
 
@@ -181,6 +188,248 @@ http.route({
 });
 
 http.route({ pathPrefix: "/api/v1/submit/", method: "OPTIONS", handler: preflight() });
+
+// ---------------------------------------------------------------------------
+// Prefilled links
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the API key on a request to the workspace it belongs to.
+ * Returns a `Response` to send back when the key is missing or rejected.
+ */
+async function requireApiKey(
+  ctx: ActionCtx,
+  request: Request,
+): Promise<
+  | { ok: true; workspaceId: Id<"workspaces">; apiKeyId: Id<"apiKeys"> }
+  | { ok: false; response: Response }
+> {
+  const header = request.headers.get("authorization") ?? "";
+  const presented = header.replace(/^Bearer\s+/i, "").trim();
+  if (!presented.startsWith("mf_live_")) {
+    return {
+      ok: false,
+      response: json(
+        { error: "Provide an API key as `Authorization: Bearer mf_live_...`." },
+        401,
+      ),
+    };
+  }
+  const resolved = await ctx.runQuery(internal.apiKeys.resolveKey, {
+    keyHash: await sha256(presented),
+  });
+  if (!resolved) {
+    return {
+      ok: false,
+      response: json({ error: "Invalid or revoked API key." }, 401),
+    };
+  }
+  await ctx.runMutation(internal.apiKeys.touchKey, {
+    apiKeyId: resolved.apiKeyId,
+  });
+  return { ok: true, ...resolved };
+}
+
+/** Reads `{ data: {...} }`, or a bare object, off a request body. */
+async function readDataBody(
+  request: Request,
+): Promise<Record<string, unknown> | null> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return null;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return null;
+  }
+  const nested = (body as Record<string, unknown>).data;
+  return typeof nested === "object" && nested !== null && !Array.isArray(nested)
+    ? (nested as Record<string, unknown>)
+    : (body as Record<string, unknown>);
+}
+
+/**
+ * `GET  /api/v1/links/form/{workspaceSlug}/{formSlug}` — the link, and every
+ *       field a link may fill in.
+ * `POST /api/v1/links/form/{workspaceSlug}/{formSlug}` — the same link with
+ *       values applied: `{ "data": { "full_name": "Asha Menon" } }`.
+ *
+ * Both require `Authorization: Bearer mf_live_...`.
+ */
+const formLinkHandler = httpAction(async (ctx, request) => {
+  const parts = new URL(request.url).pathname
+    .replace("/api/v1/links/form/", "")
+    .split("/")
+    .filter(Boolean);
+  if (parts.length !== 2) {
+    return json({ error: "Use /api/v1/links/form/{workspace}/{form}." }, 400);
+  }
+
+  const auth = await requireApiKey(ctx, request);
+  if (!auth.ok) return auth.response;
+
+  const target = await ctx.runQuery(internal.api.formLinkForApi, {
+    workspaceId: auth.workspaceId,
+    formSlug: parts[1],
+  });
+  // The workspace in the path is checked against the key's own workspace, so a
+  // key cannot reach across workspaces by naming someone else's slug.
+  if (!target || target.workspace.slug !== parts[0]) {
+    return json({ error: "Form not found in this workspace." }, 404);
+  }
+
+  const base =
+    appBaseUrl() + "/f/" + target.workspace.slug + "/" + target.form.slug;
+
+  if (request.method === "GET") {
+    return json({
+      form: target.form,
+      url: base,
+      prefill: {
+        accepts: target.fields,
+        notPrefillable: target.notPrefillable,
+        example:
+          base +
+          toQueryString(
+            target.fields
+              .slice(0, 2)
+              .map((f) => [f.key, f.options?.[0]?.value ?? "value"] as [string, string]),
+          ),
+      },
+    });
+  }
+
+  const data = await readDataBody(request);
+  if (!data) return json({ error: "Request body must be a JSON object." }, 400);
+
+  const { params, issues } = buildPrefillParams(target.fields, data);
+  if (issues.length > 0) {
+    return json({ error: "Could not build the link.", issues }, 422);
+  }
+
+  return json({
+    form: target.form,
+    url: base + toQueryString(params),
+    prefilled: params.map(([key]) => key),
+    /** A draft form has no live link yet — the URL is right, the form is not. */
+    warning:
+      target.form.status === "published"
+        ? undefined
+        : "This form is " + target.form.status + ", so the link will not accept answers yet.",
+  });
+});
+
+http.route({ pathPrefix: "/api/v1/links/form/", method: "GET", handler: formLinkHandler });
+http.route({ pathPrefix: "/api/v1/links/form/", method: "POST", handler: formLinkHandler });
+http.route({ pathPrefix: "/api/v1/links/form/", method: "OPTIONS", handler: preflight() });
+
+/**
+ * `GET  /api/v1/links/group/{workspaceSlug}/{groupSlug}` — the group link, and
+ *       the prefillable fields of every published form behind it.
+ * `POST /api/v1/links/group/{workspaceSlug}/{groupSlug}` — the same link with
+ *       values applied; they follow whichever form the visitor picks.
+ *
+ * Both require `Authorization: Bearer mf_live_...`.
+ */
+const groupLinkHandler = httpAction(async (ctx, request) => {
+  const parts = new URL(request.url).pathname
+    .replace("/api/v1/links/group/", "")
+    .split("/")
+    .filter(Boolean);
+  if (parts.length !== 2) {
+    return json({ error: "Use /api/v1/links/group/{workspace}/{group}." }, 400);
+  }
+
+  const auth = await requireApiKey(ctx, request);
+  if (!auth.ok) return auth.response;
+
+  const target = await ctx.runQuery(internal.api.groupLinkForApi, {
+    workspaceId: auth.workspaceId,
+    groupSlug: parts[1],
+  });
+  if (!target || target.workspace.slug !== parts[0]) {
+    return json({ error: "Group not found in this workspace." }, 404);
+  }
+
+  const base =
+    appBaseUrl() + "/g/" + target.workspace.slug + "/" + target.group.slug;
+
+  /**
+   * A key is offered for the group when any form behind it has that key. Its
+   * `appliesTo` says which, because a chooser's forms rarely ask the same
+   * questions and a caller needs to know what will actually land.
+   */
+  const shared = new Map<string, PrefillField & { appliesTo: string[] }>();
+  for (const form of target.forms) {
+    for (const field of form.fields) {
+      const existing = shared.get(field.key);
+      if (existing) existing.appliesTo.push(form.slug);
+      else shared.set(field.key, { ...field, appliesTo: [form.slug] });
+    }
+  }
+  const accepts = [...shared.values()];
+
+  if (request.method === "GET") {
+    return json({
+      group: target.group,
+      url: base,
+      forms: target.forms.map((form) => ({
+        title: form.title,
+        slug: form.slug,
+        url: appBaseUrl() + "/f/" + target.workspace.slug + "/" + form.slug,
+        prefill: form.fields,
+      })),
+      prefill: {
+        accepts,
+        example:
+          base +
+          toQueryString(
+            accepts
+              .slice(0, 2)
+              .map((f) => [f.key, f.options?.[0]?.value ?? "value"] as [string, string]),
+          ),
+      },
+    });
+  }
+
+  const data = await readDataBody(request);
+  if (!data) return json({ error: "Request body must be a JSON object." }, 400);
+
+  const { params, issues } = buildPrefillParams(accepts, data);
+  if (issues.length > 0) {
+    return json({ error: "Could not build the link.", issues }, 422);
+  }
+
+  const query = toQueryString(params);
+  return json({
+    group: target.group,
+    url: base + query,
+    prefilled: params.map(([key]) => key),
+    // The same values, already pointed at each form, for a caller that would
+    // rather skip the chooser.
+    forms: target.forms.map((form) => ({
+      title: form.title,
+      slug: form.slug,
+      url:
+        appBaseUrl() +
+        "/f/" +
+        target.workspace.slug +
+        "/" +
+        form.slug +
+        toQueryString(
+          params.filter(([key]) => form.fields.some((f) => f.key === key)),
+        ),
+    })),
+    warning: target.group.publicPage
+      ? undefined
+      : "This group's public link is switched off, so the group URL will not resolve.",
+  });
+});
+
+http.route({ pathPrefix: "/api/v1/links/group/", method: "GET", handler: groupLinkHandler });
+http.route({ pathPrefix: "/api/v1/links/group/", method: "POST", handler: groupLinkHandler });
+http.route({ pathPrefix: "/api/v1/links/group/", method: "OPTIONS", handler: preflight() });
 
 /**
  * `GET /api/v1/submissions?form=slug&limit=50` — read stored responses.

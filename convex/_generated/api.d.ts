@@ -22,6 +22,7 @@ import type * as lib_conditions from "../lib/conditions.js";
 import type * as lib_crypto from "../lib/crypto.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as lib_events from "../lib/events.js";
+import type * as lib_prefill from "../lib/prefill.js";
 import type * as lib_submissionText from "../lib/submissionText.js";
 import type * as lib_validate from "../lib/validate.js";
 import type * as mcpTokens from "../mcpTokens.js";
@@ -51,6 +52,7 @@ declare const fullApi: ApiFromModules<{
   "lib/crypto": typeof lib_crypto;
   "lib/errors": typeof lib_errors;
   "lib/events": typeof lib_events;
+  "lib/prefill": typeof lib_prefill;
   "lib/submissionText": typeof lib_submissionText;
   "lib/validate": typeof lib_validate;
   mcpTokens: typeof mcpTokens;
