@@ -150,6 +150,9 @@ renderer *and* again in Convex, so the HTTP API cannot bypass it.
 ## REST API
 
 Base URL is `NEXT_PUBLIC_CONVEX_SITE_URL`. CORS is open on every endpoint.
+The web app also proxies `/api/v1/*` to it (`next.config.ts`), so in
+production the same endpoints answer at `https://forms.magicwebs.ai/api/v1/…`
+— the address integrations such as Magic Agent are given.
 
 ```bash
 # Published forms in a workspace
