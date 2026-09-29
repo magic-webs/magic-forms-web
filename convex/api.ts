@@ -218,15 +218,17 @@ export const groupLinkForApi = internalQuery({
 });
 
 /**
- * Mints the token behind a link built with a `ref`. The token is all the URL
- * carries; the ref waits here until a submission through the link claims it.
+ * Mints the token behind a link built with a `ref` or a `whatsapp` number. The
+ * token is all the URL carries; the rest waits here until a submission
+ * through the link claims it.
  */
 export const createFormLink = internalMutation({
   args: {
     workspaceId: v.id("workspaces"),
     formId: v.optional(v.id("forms")),
     groupId: v.optional(v.id("formGroups")),
-    externalRef: v.string(),
+    externalRef: v.optional(v.string()),
+    whatsapp: v.optional(v.string()),
   },
   returns: v.string(),
   handler: async (ctx, args) => {
@@ -237,6 +239,7 @@ export const createFormLink = internalMutation({
       formId: args.formId,
       groupId: args.groupId,
       externalRef: args.externalRef,
+      whatsapp: args.whatsapp,
       createdAt: Date.now(),
     });
     return token;
@@ -445,6 +448,8 @@ export const submissionsForApi = internalQuery({
             : null,
           /** The `ref` of the API-built link it came through, if any. */
           externalRef: submission.externalRef ?? null,
+          /** The WhatsApp number that link was built for, if any. */
+          whatsapp: submission.whatsapp ?? null,
         };
       }),
     );

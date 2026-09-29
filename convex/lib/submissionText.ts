@@ -139,6 +139,12 @@ export function buildSubmissionText(args: {
   files: { key: string; name: string; size: number }[];
   /** Appended as "View full response" when present. */
   viewUrl?: string;
+  /**
+   * The number the link was sent to on WhatsApp. Its own line, after the
+   * answers, because it is not one of them — the form may not ask for a
+   * phone at all.
+   */
+  whatsapp?: string;
   submittedAt: number;
 }): string {
   const rows = submissionLines(args);
@@ -158,6 +164,7 @@ export function buildSubmissionText(args: {
   const stamp = new Date(args.submittedAt).toISOString().replace("T", " ").slice(0, 16) + " UTC";
 
   const parts = ["*New response: " + args.formTitle + "*", "", body];
+  if (args.whatsapp) parts.push("*WhatsApp:* " + args.whatsapp);
   if (args.viewUrl) parts.push("", "View full response:", args.viewUrl);
   parts.push("", "_Magic Forms · " + stamp + "_");
   return parts.join("\n");

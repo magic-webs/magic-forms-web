@@ -112,6 +112,21 @@ export default function SubmissionLinkPage() {
                 <CardTitle className="text-base">Answers</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
+                {submission.whatsapp && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      WhatsApp
+                    </span>
+                    <a
+                      href={"https://wa.me/" + submission.whatsapp.replace(/\D/g, "")}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-primary tabular-nums hover:underline"
+                    >
+                      {submission.whatsapp}
+                    </a>
+                  </div>
+                )}
                 {submission.rows.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     No answers were recorded.

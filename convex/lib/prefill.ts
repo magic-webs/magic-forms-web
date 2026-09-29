@@ -38,6 +38,23 @@ export function isValidExternalRef(ref: string): boolean {
   return /^[A-Za-z0-9_-]{1,128}$/.test(ref);
 }
 
+/**
+ * The WhatsApp number a caller says the person is chatting from, tidied to
+ * `+` and digits: `+91 98765-43210` and `919876543210` both become
+ * `+919876543210`. Null when it cannot be a phone number at all.
+ *
+ * Like the ref, it rides on the link rather than in the form, so it is
+ * recorded with every submission through that link whether or not the form
+ * has a phone field — and the person can neither see nor change it.
+ */
+export function normaliseWhatsApp(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!/^\+?[0-9][0-9\s().-]{6,24}$/.test(trimmed)) return null;
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length < 7 || digits.length > 15) return null;
+  return "+" + digits;
+}
+
 export type PrefillField = {
   key: string;
   label: string;

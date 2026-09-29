@@ -251,6 +251,7 @@ export const getSubmissionByToken = query({
       form: { title: form.title, slug: form.slug },
       submittedAt: submission._creationTime,
       source: submission.source,
+      whatsapp: submission.whatsapp ?? null,
       rows: submissionLines({
         steps,
         fields,
@@ -268,6 +269,7 @@ export const getSubmissionByToken = query({
           fields,
           data: submission.data,
           files: submission.files,
+          whatsapp: submission.whatsapp,
           submittedAt: submission._creationTime,
         }),
     };
@@ -363,6 +365,8 @@ export async function submitToForm(
     referrer?: string;
     /** Already resolved from a trusted `formLinks` row — never client input. */
     externalRef?: string;
+    /** From the same row, and just as trusted. */
+    whatsapp?: string;
   },
 ): Promise<typeof submitResult.type> {
   if (args.form.status !== "published") {
@@ -406,6 +410,7 @@ export async function submitToForm(
     data: cleaned,
     files,
     viewUrl,
+    whatsapp: args.whatsapp,
     submittedAt: Date.now(),
   });
   const answers = submissionLines({
@@ -428,6 +433,7 @@ export async function submitToForm(
     formattedText,
     viewToken,
     externalRef: args.externalRef,
+    whatsapp: args.whatsapp,
   });
 
   await ctx.db.patch("forms", args.form._id, {
@@ -451,6 +457,8 @@ export async function submitToForm(
       viewUrl,
       /** The `ref` the link was built with, when the person came through one. */
       externalRef: args.externalRef ?? null,
+      /** The WhatsApp number that link was built for, when it was. */
+      whatsapp: args.whatsapp ?? null,
       /** The rows of `formattedText`, keyed, for a consumer that wants fields. */
       answers,
     },
@@ -492,6 +500,12 @@ export const submit = mutation({
         issues: [{ key: "_form", message: "This form could not be found." }],
       };
     }
+    const link = await linkFor(
+      ctx,
+      resolved.workspace,
+      resolved.form,
+      args.link,
+    );
     return await submitToForm(ctx, {
       workspace: resolved.workspace,
       form: resolved.form,
@@ -500,39 +514,38 @@ export const submit = mutation({
       source: "web",
       userAgent: args.userAgent,
       referrer: args.referrer,
-      externalRef: await externalRefForLink(
-        ctx,
-        resolved.workspace,
-        resolved.form,
-        args.link,
-      ),
+      externalRef: link?.externalRef,
+      whatsapp: link?.whatsapp,
     });
   },
 });
 
 /**
- * The `externalRef` behind an `mf_link` token, when the token was minted for
- * this form, or for the group the form sits in.
+ * What an `mf_link` token stands for — the caller's `ref` and the WhatsApp
+ * number the link was sent to — when the token was minted for this form, or
+ * for the group the form sits in.
  *
  * Anything else — unknown, another workspace's, another form's — is ignored
  * rather than rejected: the token only labels a response, and a stale or
  * mangled link must never be the reason someone's answers are turned away.
  */
-async function externalRefForLink(
+async function linkFor(
   ctx: MutationCtx,
   workspace: Doc<"workspaces">,
   form: Doc<"forms">,
   token: string | undefined,
-): Promise<string | undefined> {
+): Promise<{ externalRef?: string; whatsapp?: string } | null> {
   // Minted tokens are 32 characters; anything far off that is not one of ours.
-  if (!token || token.length < 16 || token.length > 128) return undefined;
+  if (!token || token.length < 16 || token.length > 128) return null;
   const link = await ctx.db
     .query("formLinks")
     .withIndex("by_token", (q) => q.eq("token", token))
     .first();
-  if (!link || link.workspaceId !== workspace._id) return undefined;
+  if (!link || link.workspaceId !== workspace._id) return null;
   const matches =
     link.formId === form._id ||
     (link.groupId !== undefined && link.groupId === form.groupId);
-  return matches ? link.externalRef : undefined;
+  return matches
+    ? { externalRef: link.externalRef, whatsapp: link.whatsapp }
+    : null;
 }

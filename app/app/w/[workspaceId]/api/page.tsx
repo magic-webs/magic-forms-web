@@ -452,6 +452,13 @@ export default function ApiKeysPage() {
                     webhook and in <code className="font-mono">/api/v1/submissions</code>.
                   </p>
                   <p>
+                    Sending the link on WhatsApp? Add{" "}
+                    <code className="font-mono">{'"whatsapp": "+919876543210"'}</code>{" "}
+                    and that number is saved with every response through the
+                    link — in Responses, the CSV, the webhook and the message —
+                    even when the form has no phone field.
+                  </p>
+                  <p>
                     Links are built from{" "}
                     <code className="font-mono">APP_URL</code> on the Convex
                     deployment. Set it with{" "}

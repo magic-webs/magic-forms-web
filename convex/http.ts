@@ -8,6 +8,7 @@ import {
   buildPrefillParams,
   isValidExternalRef,
   LINK_PARAM,
+  normaliseWhatsApp,
   PrefillField,
   toQueryString,
 } from "./lib/prefill";
@@ -234,13 +235,18 @@ async function requireApiKey(
 }
 
 /**
- * Reads `{ data: {...}, ref?: "..." }`, or the values as a bare object, off a
- * request body. `ref` is always the caller's reference and never a value —
- * bare form included — so a field keyed `ref` is prefilled through `data`.
+ * Reads `{ data: {...}, ref?: "...", whatsapp?: "..." }`, or the values as a
+ * bare object, off a request body. `ref` and `whatsapp` are always the
+ * caller's and never values — bare form included — so a field keyed `ref` or
+ * `whatsapp` is prefilled through `data`.
  */
 async function readLinkBody(
   request: Request,
-): Promise<{ data: Record<string, unknown>; ref: unknown } | null> {
+): Promise<{
+  data: Record<string, unknown>;
+  ref: unknown;
+  whatsapp: unknown;
+} | null> {
   let body: unknown;
   try {
     body = await request.json();
@@ -253,18 +259,30 @@ async function readLinkBody(
   const record = body as Record<string, unknown>;
   const nested = record.data;
   if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
-    return { data: nested as Record<string, unknown>, ref: record.ref };
+    return {
+      data: nested as Record<string, unknown>,
+      ref: record.ref,
+      whatsapp: record.whatsapp,
+    };
   }
-  const { ref, ...bare } = record;
-  return { data: bare, ref };
+  const { ref, whatsapp, ...bare } = record;
+  return { data: bare, ref, whatsapp };
 }
 
 const REF_RULE = "`ref` must be 1-128 characters of A-Z, a-z, 0-9, _ or -.";
+const WHATSAPP_RULE =
+  "`whatsapp` must be a phone number with its country code, e.g. +919876543210.";
 
 /** The caller's `ref`: `undefined` when none was sent, `null` when unusable. */
 function readRef(raw: unknown): string | undefined | null {
   if (raw === undefined || raw === null) return undefined;
   return typeof raw === "string" && isValidExternalRef(raw) ? raw : null;
+}
+
+/** The caller's `whatsapp`, normalised: `undefined` when none, `null` when unusable. */
+function readWhatsApp(raw: unknown): string | undefined | null {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  return typeof raw === "string" ? normaliseWhatsApp(raw) : null;
 }
 
 /**
@@ -274,6 +292,8 @@ function readRef(raw: unknown): string | undefined | null {
  *       values applied: `{ "data": { "full_name": "Asha Menon" } }`. Add
  *       `"ref": "..."` and the link also carries an `mf_link` token, so the
  *       response it produces comes back with `externalRef` set to that ref.
+ *       Add `"whatsapp": "+91..."` and that number is recorded on the
+ *       response too, whether or not the form asks for one.
  *
  * Both require `Authorization: Bearer mf_live_...`.
  */
@@ -324,15 +344,18 @@ const formLinkHandler = httpAction(async (ctx, request) => {
   if (!body) return json({ error: "Request body must be a JSON object." }, 400);
   const ref = readRef(body.ref);
   if (ref === null) return json({ error: REF_RULE }, 400);
+  const whatsapp = readWhatsApp(body.whatsapp);
+  if (whatsapp === null) return json({ error: WHATSAPP_RULE }, 400);
 
   const { params, issues } = buildPrefillParams(target.fields, body.data);
   if (issues.length > 0) {
     return json({ error: "Could not build the link.", issues }, 422);
   }
 
-  // The ref itself never goes in the URL — only a token that points at it.
+  // Neither the ref nor the number goes in the URL — only a token pointing
+  // at them.
   const link: [string, string][] =
-    ref === undefined
+    ref === undefined && whatsapp === undefined
       ? []
       : [
           [
@@ -341,6 +364,7 @@ const formLinkHandler = httpAction(async (ctx, request) => {
               workspaceId: auth.workspaceId,
               formId: target.form.id,
               externalRef: ref,
+              whatsapp,
             }),
           ],
         ];
@@ -435,6 +459,8 @@ const groupLinkHandler = httpAction(async (ctx, request) => {
   if (!body) return json({ error: "Request body must be a JSON object." }, 400);
   const ref = readRef(body.ref);
   if (ref === null) return json({ error: REF_RULE }, 400);
+  const whatsapp = readWhatsApp(body.whatsapp);
+  if (whatsapp === null) return json({ error: WHATSAPP_RULE }, 400);
 
   const { params, issues } = buildPrefillParams(accepts, body.data);
   if (issues.length > 0) {
@@ -442,9 +468,9 @@ const groupLinkHandler = httpAction(async (ctx, request) => {
   }
 
   // One token for the whole group: it rides through the chooser, and is also
-  // on every direct link below, so whichever form is submitted claims the ref.
+  // on every direct link below, so whichever form is submitted claims it.
   const link: [string, string][] =
-    ref === undefined
+    ref === undefined && whatsapp === undefined
       ? []
       : [
           [
@@ -453,6 +479,7 @@ const groupLinkHandler = httpAction(async (ctx, request) => {
               workspaceId: auth.workspaceId,
               groupId: target.groupId,
               externalRef: ref,
+              whatsapp,
             }),
           ],
         ];

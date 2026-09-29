@@ -30,6 +30,7 @@ export const listByForm = query({
         read: submission.read,
         userAgent: submission.userAgent ?? null,
         referrer: submission.referrer ?? null,
+        whatsapp: submission.whatsapp ?? null,
       })),
     };
   },
@@ -145,10 +146,16 @@ export const exportCsv = query({
     const escape = (value: string) =>
       /[",\n\r]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
 
-    const header = ["Submitted at", "Source", ...columns.map((c) => c.label)];
+    const header = [
+      "Submitted at",
+      "Source",
+      "WhatsApp",
+      ...columns.map((c) => c.label),
+    ];
     const rows = submissions.map((submission) => [
       new Date(submission._creationTime).toISOString(),
       submission.source,
+      submission.whatsapp ?? "",
       ...columns.map((column) => {
         const raw = submission.data[column.key] ?? "";
         if (MULTI_TYPES.has(column.type)) return parseList(raw).join("; ");

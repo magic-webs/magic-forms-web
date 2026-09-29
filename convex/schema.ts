@@ -255,6 +255,12 @@ export default defineSchema({
      * integration can match the response to whatever it sent the link for.
      */
     externalRef: v.optional(v.string()),
+    /**
+     * The WhatsApp number the person was chatting from, copied from the
+     * `formLinks` row like `externalRef`. Recorded whether or not the form
+     * asks for a phone number.
+     */
+    whatsapp: v.optional(v.string()),
   })
     .index("by_form", ["formId"])
     .index("by_workspace", ["workspaceId"])
@@ -262,9 +268,10 @@ export default defineSchema({
     .index("by_viewToken", ["viewToken"]),
 
   /**
-   * A link built over the API with a `ref`. The URL carries only the random
-   * `token` (as `mf_link`); the reference itself never leaves the server, so
-   * the person filling the form in can neither read nor change it.
+   * A link built over the API with a `ref`, a `whatsapp` number, or both. The
+   * URL carries only the random `token` (as `mf_link`); what it stands for
+   * never leaves the server, so the person filling the form in can neither
+   * read nor change it.
    *
    * One of `formId` / `groupId` is set: a group link's token is good for any
    * form in that group, whichever one the visitor picks.
@@ -274,7 +281,9 @@ export default defineSchema({
     workspaceId: v.id("workspaces"),
     formId: v.optional(v.id("forms")),
     groupId: v.optional(v.id("formGroups")),
-    externalRef: v.string(),
+    /** Absent on a link built with only a WhatsApp number. */
+    externalRef: v.optional(v.string()),
+    whatsapp: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_token", ["token"])

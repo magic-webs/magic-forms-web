@@ -122,6 +122,9 @@ export default function ResponsesPage() {
   }
 
   const visibleColumns = (columns ?? []).slice(0, 4);
+  // Only responses that came through a link sent on WhatsApp carry a number,
+  // so the column appears once one of them is on the page.
+  const showWhatsApp = results.some((submission) => submission.whatsapp);
 
   return (
     <>
@@ -198,6 +201,9 @@ export default function ResponsesPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-28">Received</TableHead>
+                      {showWhatsApp && (
+                        <TableHead className="w-36">WhatsApp</TableHead>
+                      )}
                       {visibleColumns.map((column) => (
                         <TableHead key={column.key} className="min-w-32">
                           {column.label}
@@ -224,6 +230,11 @@ export default function ResponsesPage() {
                             {formatWhen(submission.createdAt)}
                           </span>
                         </TableCell>
+                        {showWhatsApp && (
+                          <TableCell className="whitespace-nowrap tabular-nums">
+                            {submission.whatsapp ?? "—"}
+                          </TableCell>
+                        )}
                         {visibleColumns.map((column) => (
                           <TableCell key={column.key} className="max-w-48 truncate">
                             {column.type === "file"
@@ -309,6 +320,21 @@ export default function ResponsesPage() {
             {detail && (
               <>
                 <div className="flex flex-col gap-3">
+                  {detail.whatsapp && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        WhatsApp
+                      </span>
+                      <a
+                        href={"https://wa.me/" + detail.whatsapp.replace(/\D/g, "")}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sm text-primary tabular-nums hover:underline"
+                      >
+                        {detail.whatsapp}
+                      </a>
+                    </div>
+                  )}
                   {(columns ?? []).map((column) => {
                     const files = detail.files.filter((f) => f.key === column.key);
                     const raw = detail.data[column.key] ?? "";

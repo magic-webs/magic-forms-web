@@ -194,6 +194,12 @@ that link is stored with `externalRef` set to the ref. It is echoed on the
 `submission.created` webhook and in `/api/v1/submissions`; an unknown or
 mismatched token is ignored and the response is taken as usual.
 
+A `whatsapp` number beside it (`"whatsapp": "+919876543210"`) rides on the same
+token and is saved on every response through the link as `whatsapp`, whether
+or not the form asks for a phone — shown in Responses and the CSV, added to
+`formattedText` as a `*WhatsApp:*` line, and echoed on the webhook and REST.
+Magic Agent sends it for every form an agent sends on WhatsApp.
+
 API keys are shown once and stored only as a SHA-256 digest.
 
 ## MCP server
