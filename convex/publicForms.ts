@@ -361,6 +361,8 @@ export async function submitToForm(
     source: "web" | "api";
     userAgent?: string;
     referrer?: string;
+    /** Already resolved from a trusted `formLinks` row — never client input. */
+    externalRef?: string;
   },
 ): Promise<typeof submitResult.type> {
   if (args.form.status !== "published") {
@@ -392,17 +394,26 @@ export async function submitToForm(
   const files = args.files.filter((file) => shownKeys.has(file.key));
 
   // The magic link has to exist before the message that carries it, so the
-  // token is minted here and the text is built around it.
+  // token is minted here and the text is built around it. Both the text and
+  // `answers` read only the fields that were on screen, so a checkbox on a
+  // branch nobody took is not reported as a "No".
   const viewToken = randomToken(24);
   const viewUrl = submissionViewUrl(viewToken);
   const formattedText = buildSubmissionText({
     formTitle: args.form.title,
     steps,
-    fields,
+    fields: shown,
     data: cleaned,
     files,
     viewUrl,
     submittedAt: Date.now(),
+  });
+  const answers = submissionLines({
+    steps,
+    fields: shown,
+    data: cleaned,
+    files,
+    fileSizes: false,
   });
 
   const submissionId = await ctx.db.insert("submissions", {
@@ -416,6 +427,7 @@ export async function submitToForm(
     read: false,
     formattedText,
     viewToken,
+    externalRef: args.externalRef,
   });
 
   await ctx.db.patch("forms", args.form._id, {
@@ -437,6 +449,10 @@ export async function submitToForm(
       /** Ready to forward to WhatsApp as-is — labels, answers and the link. */
       formattedText,
       viewUrl,
+      /** The `ref` the link was built with, when the person came through one. */
+      externalRef: args.externalRef ?? null,
+      /** The rows of `formattedText`, keyed, for a consumer that wants fields. */
+      answers,
     },
   });
 
@@ -464,6 +480,8 @@ export const submit = mutation({
     ),
     userAgent: v.optional(v.string()),
     referrer: v.optional(v.string()),
+    /** The `mf_link` token the page was opened with, if any. */
+    link: v.optional(v.string()),
   },
   returns: submitResult,
   handler: async (ctx, args): Promise<typeof submitResult.type> => {
@@ -482,6 +500,39 @@ export const submit = mutation({
       source: "web",
       userAgent: args.userAgent,
       referrer: args.referrer,
+      externalRef: await externalRefForLink(
+        ctx,
+        resolved.workspace,
+        resolved.form,
+        args.link,
+      ),
     });
   },
 });
+
+/**
+ * The `externalRef` behind an `mf_link` token, when the token was minted for
+ * this form, or for the group the form sits in.
+ *
+ * Anything else — unknown, another workspace's, another form's — is ignored
+ * rather than rejected: the token only labels a response, and a stale or
+ * mangled link must never be the reason someone's answers are turned away.
+ */
+async function externalRefForLink(
+  ctx: MutationCtx,
+  workspace: Doc<"workspaces">,
+  form: Doc<"forms">,
+  token: string | undefined,
+): Promise<string | undefined> {
+  // Minted tokens are 32 characters; anything far off that is not one of ours.
+  if (!token || token.length < 16 || token.length > 128) return undefined;
+  const link = await ctx.db
+    .query("formLinks")
+    .withIndex("by_token", (q) => q.eq("token", token))
+    .first();
+  if (!link || link.workspaceId !== workspace._id) return undefined;
+  const matches =
+    link.formId === form._id ||
+    (link.groupId !== undefined && link.groupId === form.groupId);
+  return matches ? link.externalRef : undefined;
+}

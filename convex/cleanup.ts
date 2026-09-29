@@ -78,13 +78,18 @@ export const purgeWorkspace = internalMutation({
       "apiKeys",
       "mcpTokens",
       "formGroups",
+      "formLinks",
     ] as const;
+    // An integration mints a link per message it sends, so `formLinks` can
+    // outgrow a batch; any full batch means another pass before the end.
+    let more = false;
     for (const table of scoped) {
       const rows = await ctx.db
         .query(table)
         .withIndex("by_workspace", (q) => q.eq("workspaceId", args.workspaceId))
         .take(BATCH);
       for (const row of rows) await ctx.db.delete(table, row._id);
+      if (rows.length === BATCH) more = true;
     }
 
     const deliveries = await ctx.db
@@ -95,7 +100,7 @@ export const purgeWorkspace = internalMutation({
       await ctx.db.delete("webhookDeliveries", row._id);
     }
 
-    if (deliveries.length < BATCH) {
+    if (deliveries.length < BATCH && !more) {
       await ctx.db.delete("workspaces", args.workspaceId);
     } else {
       await ctx.scheduler.runAfter(0, internal.cleanup.purgeWorkspace, args);

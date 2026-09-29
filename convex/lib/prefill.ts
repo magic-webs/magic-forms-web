@@ -15,6 +15,29 @@ export function isPrefillable(type: Doc<"fields">["type"]): boolean {
   return !STATIC_TYPES.has(type) && type !== "file";
 }
 
+/**
+ * The query parameter that carries a `formLinks` token. It is the link's, not
+ * the form's: a field that happens to share the key is never filled from it,
+ * so the token cannot end up on screen or in an answer.
+ */
+export const LINK_PARAM = "mf_link";
+
+function isPrefillableField(field: { key: string; type: string }): boolean {
+  return (
+    isPrefillable(field.type as Doc<"fields">["type"]) &&
+    field.key !== LINK_PARAM
+  );
+}
+
+/**
+ * What a caller may pass to an API-built link: an opaque id of its own, echoed
+ * back on the submission. Kept to URL- and log-safe characters so it can be
+ * stored and returned verbatim without escaping anywhere.
+ */
+export function isValidExternalRef(ref: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(ref);
+}
+
 export type PrefillField = {
   key: string;
   label: string;
@@ -37,6 +60,26 @@ export function serialisePrefillField(field: Doc<"fields">): PrefillField {
     multiple,
     ...(hasOptions ? { options: field.options } : {}),
   };
+}
+
+/**
+ * Every field a link may fill in, in the order the form asks for them — step
+ * order first, then field order. The one list behind every endpoint that names
+ * prefill keys, so no two of them can disagree about what a link accepts.
+ */
+export function prefillableFields(
+  steps: Doc<"steps">[],
+  fields: Doc<"fields">[],
+): PrefillField[] {
+  const stepOrder = new Map(steps.map((step) => [step._id, step.order]));
+  return fields
+    .filter(isPrefillableField)
+    .sort((a, b) => {
+      const sa = stepOrder.get(a.stepId) ?? 0;
+      const sb = stepOrder.get(b.stepId) ?? 0;
+      return sa === sb ? a.order - b.order : sa - sb;
+    })
+    .map(serialisePrefillField);
 }
 
 export type PrefillIssue = { key: string; message: string };
@@ -131,7 +174,8 @@ export function toQueryString(params: [string, string][]): string {
  * state in: list fields as a JSON array string, everything else as itself.
  *
  * Unknown parameters are ignored — links pick up `utm_source` and friends on
- * the way, and none of that is the form's business.
+ * the way, and none of that is the form's business. So is `mf_link`, which is
+ * read separately by `readLinkToken`.
  */
 export function readPrefillFromSearch(
   search: string,
@@ -140,7 +184,7 @@ export function readPrefillFromSearch(
   const params = new URLSearchParams(search);
   const values: Record<string, string> = {};
   for (const field of fields) {
-    if (!isPrefillable(field.type as Doc<"fields">["type"])) continue;
+    if (!isPrefillableField(field)) continue;
     const found = params.getAll(field.key);
     if (found.length === 0) continue;
     values[field.key] = MULTI_TYPES.has(field.type)
@@ -148,4 +192,10 @@ export function readPrefillFromSearch(
       : found[found.length - 1];
   }
   return values;
+}
+
+/** The `mf_link` token on a URL, if any. Resolved — or ignored — on submit. */
+export function readLinkToken(search: string): string | undefined {
+  const token = new URLSearchParams(search).get(LINK_PARAM)?.trim();
+  return token ? token : undefined;
 }

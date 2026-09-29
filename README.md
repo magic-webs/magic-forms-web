@@ -149,7 +149,7 @@ renderer *and* again in Convex, so the HTTP API cannot bypass it.
 
 ## REST API
 
-Base URL is `NEXT_PUBLIC_CONVEX_SITE_URL`. CORS is open on all three endpoints.
+Base URL is `NEXT_PUBLIC_CONVEX_SITE_URL`. CORS is open on every endpoint.
 
 ```bash
 # Published forms in a workspace
@@ -167,6 +167,29 @@ POST /api/v1/submit/{workspaceSlug}/{formSlug}
 GET /api/v1/submissions?form={formSlug}&limit=50
     Authorization: Bearer mf_live_...
 ```
+
+These need a workspace API key too, and only ever reach that key's workspace:
+
+```bash
+# The key's workspace, and its published forms with the keys a link may prefill
+GET /api/v1/me
+GET /api/v1/forms
+
+# A prefilled link; `ref` tags whatever response comes back through it
+POST /api/v1/links/form/{workspaceSlug}/{formSlug}
+     {"data": {"full_name": "Asha Menon"}, "ref": "conv_8f2c"}
+POST /api/v1/links/group/{workspaceSlug}/{groupSlug}
+
+# Webhooks, without the dashboard — the secret is returned once, on create
+POST   /api/v1/webhooks   {"url": "https://...", "events": ["submission.created"]}
+DELETE /api/v1/webhooks/{id}
+```
+
+A `ref` (1–128 characters of `A-Z a-z 0-9 _ -`) never goes in the URL: the link
+carries an `mf_link` token that points at it, and a response submitted through
+that link is stored with `externalRef` set to the ref. It is echoed on the
+`submission.created` webhook and in `/api/v1/submissions`; an unknown or
+mismatched token is ignored and the response is taken as usual.
 
 API keys are shown once and stored only as a SHA-256 digest.
 
@@ -285,6 +308,11 @@ A webhook is scoped to the whole workspace, or to a single form. Deliveries are
 scheduled (never blocking the mutation), retried twice on a network error or 5xx
 with a 15s then 60s backoff, and logged with status code, response body and
 duration.
+
+`submission.created` carries the raw `data`, the WhatsApp-ready
+`formattedText`, `answers` — the same rows as `[{ key, label, type, value }]`,
+in form order with display values — and `externalRef` (the link's `ref`, or
+`null`).
 
 Every request carries:
 

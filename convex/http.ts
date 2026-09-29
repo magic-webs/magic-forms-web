@@ -3,8 +3,11 @@ import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { ActionCtx, httpAction } from "./_generated/server";
 import { sha256 } from "./lib/crypto";
+import { ALL_EVENTS, WebhookEvent } from "./lib/events";
 import {
   buildPrefillParams,
+  isValidExternalRef,
+  LINK_PARAM,
   PrefillField,
   toQueryString,
 } from "./lib/prefill";
@@ -60,7 +63,7 @@ http.route({
 
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
   "access-control-allow-headers": "content-type, authorization",
   "access-control-max-age": "86400",
 };
@@ -230,10 +233,14 @@ async function requireApiKey(
   return { ok: true, ...resolved };
 }
 
-/** Reads `{ data: {...} }`, or a bare object, off a request body. */
-async function readDataBody(
+/**
+ * Reads `{ data: {...}, ref?: "..." }`, or the values as a bare object, off a
+ * request body. `ref` is always the caller's reference and never a value —
+ * bare form included — so a field keyed `ref` is prefilled through `data`.
+ */
+async function readLinkBody(
   request: Request,
-): Promise<Record<string, unknown> | null> {
+): Promise<{ data: Record<string, unknown>; ref: unknown } | null> {
   let body: unknown;
   try {
     body = await request.json();
@@ -243,17 +250,30 @@ async function readDataBody(
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return null;
   }
-  const nested = (body as Record<string, unknown>).data;
-  return typeof nested === "object" && nested !== null && !Array.isArray(nested)
-    ? (nested as Record<string, unknown>)
-    : (body as Record<string, unknown>);
+  const record = body as Record<string, unknown>;
+  const nested = record.data;
+  if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
+    return { data: nested as Record<string, unknown>, ref: record.ref };
+  }
+  const { ref, ...bare } = record;
+  return { data: bare, ref };
+}
+
+const REF_RULE = "`ref` must be 1-128 characters of A-Z, a-z, 0-9, _ or -.";
+
+/** The caller's `ref`: `undefined` when none was sent, `null` when unusable. */
+function readRef(raw: unknown): string | undefined | null {
+  if (raw === undefined || raw === null) return undefined;
+  return typeof raw === "string" && isValidExternalRef(raw) ? raw : null;
 }
 
 /**
  * `GET  /api/v1/links/form/{workspaceSlug}/{formSlug}` — the link, and every
  *       field a link may fill in.
  * `POST /api/v1/links/form/{workspaceSlug}/{formSlug}` — the same link with
- *       values applied: `{ "data": { "full_name": "Asha Menon" } }`.
+ *       values applied: `{ "data": { "full_name": "Asha Menon" } }`. Add
+ *       `"ref": "..."` and the link also carries an `mf_link` token, so the
+ *       response it produces comes back with `externalRef` set to that ref.
  *
  * Both require `Authorization: Bearer mf_live_...`.
  */
@@ -300,17 +320,34 @@ const formLinkHandler = httpAction(async (ctx, request) => {
     });
   }
 
-  const data = await readDataBody(request);
-  if (!data) return json({ error: "Request body must be a JSON object." }, 400);
+  const body = await readLinkBody(request);
+  if (!body) return json({ error: "Request body must be a JSON object." }, 400);
+  const ref = readRef(body.ref);
+  if (ref === null) return json({ error: REF_RULE }, 400);
 
-  const { params, issues } = buildPrefillParams(target.fields, data);
+  const { params, issues } = buildPrefillParams(target.fields, body.data);
   if (issues.length > 0) {
     return json({ error: "Could not build the link.", issues }, 422);
   }
 
+  // The ref itself never goes in the URL — only a token that points at it.
+  const link: [string, string][] =
+    ref === undefined
+      ? []
+      : [
+          [
+            LINK_PARAM,
+            await ctx.runMutation(internal.api.createFormLink, {
+              workspaceId: auth.workspaceId,
+              formId: target.form.id,
+              externalRef: ref,
+            }),
+          ],
+        ];
+
   return json({
     form: target.form,
-    url: base + toQueryString(params),
+    url: base + toQueryString([...params, ...link]),
     prefilled: params.map(([key]) => key),
     /** A draft form has no live link yet — the URL is right, the form is not. */
     warning:
@@ -328,7 +365,8 @@ http.route({ pathPrefix: "/api/v1/links/form/", method: "OPTIONS", handler: pref
  * `GET  /api/v1/links/group/{workspaceSlug}/{groupSlug}` — the group link, and
  *       the prefillable fields of every published form behind it.
  * `POST /api/v1/links/group/{workspaceSlug}/{groupSlug}` — the same link with
- *       values applied; they follow whichever form the visitor picks.
+ *       values applied; they follow whichever form the visitor picks. A `ref`
+ *       works as it does on a form link, for whichever form is submitted.
  *
  * Both require `Authorization: Bearer mf_live_...`.
  */
@@ -393,15 +431,33 @@ const groupLinkHandler = httpAction(async (ctx, request) => {
     });
   }
 
-  const data = await readDataBody(request);
-  if (!data) return json({ error: "Request body must be a JSON object." }, 400);
+  const body = await readLinkBody(request);
+  if (!body) return json({ error: "Request body must be a JSON object." }, 400);
+  const ref = readRef(body.ref);
+  if (ref === null) return json({ error: REF_RULE }, 400);
 
-  const { params, issues } = buildPrefillParams(accepts, data);
+  const { params, issues } = buildPrefillParams(accepts, body.data);
   if (issues.length > 0) {
     return json({ error: "Could not build the link.", issues }, 422);
   }
 
-  const query = toQueryString(params);
+  // One token for the whole group: it rides through the chooser, and is also
+  // on every direct link below, so whichever form is submitted claims the ref.
+  const link: [string, string][] =
+    ref === undefined
+      ? []
+      : [
+          [
+            LINK_PARAM,
+            await ctx.runMutation(internal.api.createFormLink, {
+              workspaceId: auth.workspaceId,
+              groupId: target.groupId,
+              externalRef: ref,
+            }),
+          ],
+        ];
+
+  const query = toQueryString([...params, ...link]);
   return json({
     group: target.group,
     url: base + query,
@@ -417,9 +473,10 @@ const groupLinkHandler = httpAction(async (ctx, request) => {
         target.workspace.slug +
         "/" +
         form.slug +
-        toQueryString(
-          params.filter(([key]) => form.fields.some((f) => f.key === key)),
-        ),
+        toQueryString([
+          ...params.filter(([key]) => form.fields.some((f) => f.key === key)),
+          ...link,
+        ]),
     })),
     warning: target.group.publicPage
       ? undefined
@@ -430,6 +487,147 @@ const groupLinkHandler = httpAction(async (ctx, request) => {
 http.route({ pathPrefix: "/api/v1/links/group/", method: "GET", handler: groupLinkHandler });
 http.route({ pathPrefix: "/api/v1/links/group/", method: "POST", handler: groupLinkHandler });
 http.route({ pathPrefix: "/api/v1/links/group/", method: "OPTIONS", handler: preflight() });
+
+// ---------------------------------------------------------------------------
+// The key's own workspace — what an integration connects with
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /api/v1/me` — the workspace an API key belongs to. The cheapest way for
+ * an integration to check a key before it saves it.
+ */
+http.route({
+  path: "/api/v1/me",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const auth = await requireApiKey(ctx, request);
+    if (!auth.ok) return auth.response;
+
+    const workspace = await ctx.runQuery(internal.api.workspaceForApi, {
+      workspaceId: auth.workspaceId,
+    });
+    if (!workspace) return json({ error: "Workspace not found." }, 404);
+    return json({ workspace });
+  }),
+});
+
+http.route({ path: "/api/v1/me", method: "OPTIONS", handler: preflight() });
+
+/**
+ * `GET /api/v1/forms` — every published form in the key's workspace, with the
+ * link to each and the keys that link may prefill (the same list as
+ * `prefill.accepts` on the link endpoint).
+ */
+http.route({
+  path: "/api/v1/forms",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const auth = await requireApiKey(ctx, request);
+    if (!auth.ok) return auth.response;
+
+    const forms = await ctx.runQuery(internal.api.formsForApi, {
+      workspaceId: auth.workspaceId,
+    });
+    if (!forms) return json({ error: "Workspace not found." }, 404);
+    return json({ forms });
+  }),
+});
+
+http.route({ path: "/api/v1/forms", method: "OPTIONS", handler: preflight() });
+
+function isWebhookEvent(value: unknown): value is WebhookEvent {
+  return typeof value === "string" && (ALL_EVENTS as string[]).includes(value);
+}
+
+/**
+ * `POST /api/v1/webhooks` — subscribe a URL to events in the key's workspace:
+ *       `{ "url": "https://...", "events": ["submission.created"],
+ *          "name"?: "...", "formId"?: "..." }`.
+ *       The signing secret is returned here, once.
+ *
+ * Requires `Authorization: Bearer mf_live_...`.
+ */
+http.route({
+  path: "/api/v1/webhooks",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const auth = await requireApiKey(ctx, request);
+    if (!auth.ok) return auth.response;
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Request body must be JSON." }, 400);
+    }
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return json({ error: "Request body must be a JSON object." }, 400);
+    }
+    const { url, events, name, formId } = body as Record<string, unknown>;
+
+    if (typeof url !== "string" || url.trim() === "") {
+      return json({ error: "`url` is required." }, 400);
+    }
+    const available = "Available: " + ALL_EVENTS.join(", ") + ".";
+    if (!Array.isArray(events) || events.length === 0) {
+      return json({ error: "`events` must be a non-empty list. " + available }, 400);
+    }
+    const unknown = events.filter((event) => !isWebhookEvent(event));
+    if (unknown.length > 0) {
+      return json(
+        { error: "Unknown event: " + unknown.map(String).join(", ") + ". " + available },
+        400,
+      );
+    }
+    if (name !== undefined && name !== null && typeof name !== "string") {
+      return json({ error: "`name` must be a string." }, 400);
+    }
+    if (formId !== undefined && formId !== null && typeof formId !== "string") {
+      return json({ error: "`formId` must be a string." }, 400);
+    }
+
+    const result = await ctx.runMutation(internal.api.createWebhookForApi, {
+      workspaceId: auth.workspaceId,
+      url,
+      events: [...new Set(events.filter(isWebhookEvent))],
+      name: typeof name === "string" ? name : undefined,
+      formId: typeof formId === "string" && formId !== "" ? formId : undefined,
+    });
+    if (!result.ok) return json({ error: result.error }, result.status);
+    return json({ webhook: result.webhook }, 201);
+  }),
+});
+
+/**
+ * `DELETE /api/v1/webhooks/{id}` — remove a webhook from the key's workspace.
+ * Requires `Authorization: Bearer mf_live_...`.
+ */
+http.route({
+  pathPrefix: "/api/v1/webhooks/",
+  method: "DELETE",
+  handler: httpAction(async (ctx, request) => {
+    const parts = new URL(request.url).pathname
+      .replace("/api/v1/webhooks/", "")
+      .split("/")
+      .filter(Boolean);
+    if (parts.length !== 1) {
+      return json({ error: "Use /api/v1/webhooks/{id}." }, 400);
+    }
+
+    const auth = await requireApiKey(ctx, request);
+    if (!auth.ok) return auth.response;
+
+    const removed = await ctx.runMutation(internal.api.removeWebhookForApi, {
+      workspaceId: auth.workspaceId,
+      webhookId: parts[0],
+    });
+    if (!removed) return json({ error: "Webhook not found in this workspace." }, 404);
+    return json({ ok: true });
+  }),
+});
+
+http.route({ path: "/api/v1/webhooks", method: "OPTIONS", handler: preflight() });
+http.route({ pathPrefix: "/api/v1/webhooks/", method: "OPTIONS", handler: preflight() });
 
 /**
  * `GET /api/v1/submissions?form=slug&limit=50` — read stored responses.

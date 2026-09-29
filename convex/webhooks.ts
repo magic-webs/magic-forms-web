@@ -1,16 +1,17 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { Doc } from "./_generated/dataModel";
+import { Doc, Id } from "./_generated/dataModel";
 import {
   internalAction,
   internalMutation,
   internalQuery,
   mutation,
+  MutationCtx,
   query,
 } from "./_generated/server";
 import { requireWorkspaceAccess } from "./lib/authz";
 import { hmacSha256, randomToken } from "./lib/crypto";
-import { ALL_EVENTS } from "./lib/events";
+import { ALL_EVENTS, WebhookEvent } from "./lib/events";
 import { webhookEvent } from "./schema";
 import { userError } from "./lib/errors";
 
@@ -71,31 +72,55 @@ export const create = mutation({
   returns: v.id("webhooks"),
   handler: async (ctx, args) => {
     await requireWorkspaceAccess(ctx, args.workspaceId, "admin");
-    assertHttpsUrl(args.url);
-    if (args.events.length === 0) {
-      userError("Pick at least one event to listen for.");
-    }
-    if (args.formId) {
-      const form = await ctx.db.get("forms", args.formId);
-      if (!form || form.workspaceId !== args.workspaceId) {
-        userError("That form is not in this workspace.");
-      }
-    }
-
-    return await ctx.db.insert("webhooks", {
-      workspaceId: args.workspaceId,
-      formId: args.formId,
+    const hook = await insertWebhook(ctx, {
+      ...args,
       name: args.name.trim() || "Webhook",
-      url: args.url.trim(),
-      events: args.events,
-      secret: "whsec_" + randomToken(24),
-      enabled: true,
-      headers: args.headers ?? [],
-      successCount: 0,
-      failureCount: 0,
     });
+    return hook._id;
   },
 });
+
+/**
+ * Writes a new webhook, live from the start with a fresh secret. The one place
+ * a row is made, so a hook added in the dashboard and one added over the REST
+ * API are the same thing. The caller has already authorised the workspace.
+ */
+export async function insertWebhook(
+  ctx: MutationCtx,
+  args: {
+    workspaceId: Id<"workspaces">;
+    name: string;
+    url: string;
+    events: WebhookEvent[];
+    formId?: Id<"forms">;
+    headers?: { key: string; value: string }[];
+  },
+): Promise<Doc<"webhooks">> {
+  assertHttpsUrl(args.url);
+  if (args.events.length === 0) {
+    userError("Pick at least one event to listen for.");
+  }
+  if (args.formId) {
+    const form = await ctx.db.get("forms", args.formId);
+    if (!form || form.workspaceId !== args.workspaceId) {
+      userError("That form is not in this workspace.");
+    }
+  }
+
+  const webhookId = await ctx.db.insert("webhooks", {
+    workspaceId: args.workspaceId,
+    formId: args.formId,
+    name: args.name,
+    url: args.url.trim(),
+    events: args.events,
+    secret: "whsec_" + randomToken(24),
+    enabled: true,
+    headers: args.headers ?? [],
+    successCount: 0,
+    failureCount: 0,
+  });
+  return (await ctx.db.get("webhooks", webhookId))!;
+}
 
 export const update = mutation({
   args: {
@@ -158,18 +183,26 @@ export const remove = mutation({
     const hook = await ctx.db.get("webhooks", args.webhookId);
     if (!hook) return null;
     await requireWorkspaceAccess(ctx, hook.workspaceId, "admin");
-    await ctx.db.delete("webhooks", args.webhookId);
-
-    const deliveries = await ctx.db
-      .query("webhookDeliveries")
-      .withIndex("by_webhook", (q) => q.eq("webhookId", args.webhookId))
-      .take(200);
-    for (const delivery of deliveries) {
-      await ctx.db.delete("webhookDeliveries", delivery._id);
-    }
+    await deleteWebhook(ctx, args.webhookId);
     return null;
   },
 });
+
+/** Drops a webhook and its recent delivery log. The caller has authorised it. */
+export async function deleteWebhook(
+  ctx: MutationCtx,
+  webhookId: Id<"webhooks">,
+): Promise<void> {
+  await ctx.db.delete("webhooks", webhookId);
+
+  const deliveries = await ctx.db
+    .query("webhookDeliveries")
+    .withIndex("by_webhook", (q) => q.eq("webhookId", webhookId))
+    .take(200);
+  for (const delivery of deliveries) {
+    await ctx.db.delete("webhookDeliveries", delivery._id);
+  }
+}
 
 /** Sends a sample payload so an endpoint can be verified from the UI. */
 export const sendTest = mutation({
@@ -395,14 +428,21 @@ export const deliver = internalAction({
   },
 });
 
-function assertHttpsUrl(url: string) {
+/** Why a URL cannot receive deliveries, or `null` when it can. */
+export function webhookUrlProblem(url: string): string | null {
   let parsed: URL;
   try {
     parsed = new URL(url.trim());
   } catch {
-    userError("Enter a valid absolute URL.");
+    return "Enter a valid absolute URL.";
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    userError("Webhook URLs must use http:// or https://");
+    return "Webhook URLs must use http:// or https://";
   }
+  return null;
+}
+
+function assertHttpsUrl(url: string) {
+  const problem = webhookUrlProblem(url);
+  if (problem) userError(problem);
 }

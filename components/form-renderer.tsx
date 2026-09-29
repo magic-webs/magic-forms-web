@@ -186,6 +186,12 @@ type Props = {
    * dropped if their branch never shows.
    */
   prefill?: Record<string, string>;
+  /**
+   * The `mf_link` token the page was opened with. Sent with every submission
+   * from this page, "Submit another" included; the server resolves it to the
+   * link's reference, or ignores it.
+   */
+  linkToken?: string;
 };
 
 export function FormRenderer({
@@ -194,6 +200,7 @@ export function FormRenderer({
   fullScreen = false,
   brand,
   prefill,
+  linkToken,
 }: Props) {
   const submit = useMutation(api.publicForms.submit);
   const generateUploadUrl = useMutation(api.publicForms.generateUploadUrl);
@@ -362,6 +369,7 @@ export function FormRenderer({
           typeof document === "undefined" || !document.referrer
             ? undefined
             : document.referrer,
+        link: linkToken,
       });
 
       if (!result.ok) {

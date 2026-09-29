@@ -249,11 +249,36 @@ export default defineSchema({
      * the WhatsApp message so the details are one tap away.
      */
     viewToken: v.optional(v.string()),
+    /**
+     * The caller's own reference, copied from the `formLinks` row the person
+     * arrived through. Opaque to us: stored and echoed back verbatim, so an
+     * integration can match the response to whatever it sent the link for.
+     */
+    externalRef: v.optional(v.string()),
   })
     .index("by_form", ["formId"])
     .index("by_workspace", ["workspaceId"])
     .index("by_form_and_read", ["formId", "read"])
     .index("by_viewToken", ["viewToken"]),
+
+  /**
+   * A link built over the API with a `ref`. The URL carries only the random
+   * `token` (as `mf_link`); the reference itself never leaves the server, so
+   * the person filling the form in can neither read nor change it.
+   *
+   * One of `formId` / `groupId` is set: a group link's token is good for any
+   * form in that group, whichever one the visitor picks.
+   */
+  formLinks: defineTable({
+    token: v.string(),
+    workspaceId: v.id("workspaces"),
+    formId: v.optional(v.id("forms")),
+    groupId: v.optional(v.id("formGroups")),
+    externalRef: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_token", ["token"])
+    .index("by_workspace", ["workspaceId"]),
 
   /** A webhook scoped to a whole workspace, or to one form when formId is set. */
   webhooks: defineTable({

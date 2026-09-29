@@ -198,7 +198,7 @@ export default function ApiKeysPage() {
     {
       method: "POST",
       path: `/api/v1/links/form/${slug}/{formSlug}`,
-      body: "Builds a prefilled form link from the values you send.",
+      body: "Builds a prefilled form link from the values you send. Add a ref and the response comes back carrying it as externalRef.",
       auth: true,
     },
     {
@@ -210,7 +210,31 @@ export default function ApiKeysPage() {
     {
       method: "POST",
       path: `/api/v1/links/group/${slug}/{groupSlug}`,
-      body: "Builds a prefilled group link. The values follow whichever form the visitor picks.",
+      body: "Builds a prefilled group link. The values, and a ref, follow whichever form the visitor picks.",
+      auth: true,
+    },
+    {
+      method: "GET",
+      path: "/api/v1/me",
+      body: "Returns the workspace the key belongs to.",
+      auth: true,
+    },
+    {
+      method: "GET",
+      path: "/api/v1/forms",
+      body: "Lists every published form in the key's workspace, with its link and the keys a link may prefill.",
+      auth: true,
+    },
+    {
+      method: "POST",
+      path: "/api/v1/webhooks",
+      body: "Subscribes a URL to events in this workspace. The signing secret is returned once.",
+      auth: true,
+    },
+    {
+      method: "DELETE",
+      path: "/api/v1/webhooks/{id}",
+      body: "Removes a webhook from this workspace.",
       auth: true,
     },
   ];
@@ -260,7 +284,13 @@ export default function ApiKeysPage() {
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge
-                        variant={endpoint.method === "GET" ? "secondary" : "default"}
+                        variant={
+                          endpoint.method === "GET"
+                            ? "secondary"
+                            : endpoint.method === "DELETE"
+                              ? "destructive"
+                              : "default"
+                        }
                         className="font-mono text-[0.7rem]"
                       >
                         {endpoint.method}
@@ -408,6 +438,18 @@ export default function ApiKeysPage() {
                     <code className="font-mono">notPrefillable</code>. Hidden
                     fields can, which is how a CRM id or campaign tag rides
                     along into the response.
+                  </p>
+                  <p>
+                    Send <code className="font-mono">{'"ref": "your-id"'}</code>{" "}
+                    next to <code className="font-mono">data</code> (1–128
+                    characters of letters, digits,{" "}
+                    <code className="font-mono">_</code> and{" "}
+                    <code className="font-mono">-</code>) and the link carries
+                    an <code className="font-mono">mf_link</code> token instead
+                    of the ref itself. A response through it comes back with{" "}
+                    <code className="font-mono">externalRef</code> set, on the{" "}
+                    <code className="font-mono">submission.created</code>{" "}
+                    webhook and in <code className="font-mono">/api/v1/submissions</code>.
                   </p>
                   <p>
                     Links are built from{" "}

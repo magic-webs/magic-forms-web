@@ -8,7 +8,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowLeft02Icon, Note04Icon } from "@hugeicons/core-free-icons";
 
 import { api } from "@/convex/_generated/api";
-import { readPrefillFromSearch } from "@/convex/lib/prefill";
+import { readLinkToken, readPrefillFromSearch } from "@/convex/lib/prefill";
 import { Logo } from "@/components/logo";
 import { FormRenderer, FormSchema } from "@/components/form-renderer";
 import { Button } from "@/components/ui/button";
@@ -57,19 +57,29 @@ export default function PublicFormPage() {
   }, [schema, recordView, workspaceSlug, formSlug]);
 
   /**
-   * Values carried by a prefilled link, e.g. `?full_name=Asha+Menon`.
+   * The link's query string: prefilled values, e.g. `?full_name=Asha+Menon`,
+   * and the `mf_link` token of a link built over the API.
    *
    * Read straight off `window.location` rather than through `useSearchParams`:
-   * the renderer only ever mounts after the Convex query resolves, which is
-   * client-side, so there is no server snapshot to disagree with. Unknown
-   * parameters — `utm_source` and the like — are dropped by the reader.
+   * everything that uses it only mounts after the Convex query resolves, which
+   * is client-side, so there is no server snapshot to disagree with.
    */
+  const search = React.useMemo(
+    () => (schema && typeof window !== "undefined" ? window.location.search : ""),
+    [schema],
+  );
+
+  // Unknown parameters — `utm_source` and the like — are dropped by the reader.
   const prefill = React.useMemo(() => {
-    if (!schema || typeof window === "undefined") return undefined;
+    if (!schema) return undefined;
     const fields = schema.steps.flatMap((step) => step.fields);
-    const values = readPrefillFromSearch(window.location.search, fields);
+    const values = readPrefillFromSearch(search, fields);
     return Object.keys(values).length > 0 ? values : undefined;
-  }, [schema]);
+  }, [schema, search]);
+
+  // Handed to the submission as-is: the server decides whether it counts, and
+  // nothing on the page ever shows it.
+  const linkToken = readLinkToken(search);
 
   const live = schema && schema.form.status === "published";
 
@@ -146,10 +156,12 @@ export default function PublicFormPage() {
             <>
               {/* A form reached through a group's chooser keeps a way back to
                   it, in case the wrong option was picked. An arrow rather than
-                  a breadcrumb: the name in the bar is the form you are on. */}
+                  a breadcrumb: the name in the bar is the form you are on. The
+                  query string goes back too, so the next pick keeps the link's
+                  values and token. */}
               {schema.group && (
                 <Link
-                  href={`/g/${schema.workspace.slug}/${schema.group.slug}`}
+                  href={`/g/${schema.workspace.slug}/${schema.group.slug}${search}`}
                   aria-label={"Back to " + schema.group.name}
                   className="-ml-1 shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
                 >
@@ -177,6 +189,7 @@ export default function PublicFormPage() {
             fullScreen
             brand={<PoweredBy />}
             prefill={prefill}
+            linkToken={linkToken}
           />
         ) : (
           message

@@ -37,12 +37,17 @@ function readableValue(
   field: Doc<"fields">,
   raw: string | undefined,
   files: { key: string; name: string; size: number }[],
+  fileSizes: boolean,
 ): string | null {
   if (field.type === "file") {
     const mine = files.filter((file) => file.key === field.key);
     if (mine.length === 0) return null;
     return mine
-      .map((file) => file.name + " (" + Math.round(file.size / 1024) + " KB)")
+      .map((file) =>
+        fileSizes
+          ? file.name + " (" + Math.round(file.size / 1024) + " KB)"
+          : file.name,
+      )
       .join(", ");
   }
 
@@ -90,20 +95,38 @@ export function orderedFields(
     });
 }
 
-/** One `{ label, value }` row per answered field, in the form's own order. */
+export type SubmissionLine = {
+  key: string;
+  label: string;
+  type: Doc<"fields">["type"];
+  value: string;
+};
+
+/**
+ * One row per answered field, in the form's own order, with the value as a
+ * person reads it. The message is built from these, and `submission.created`
+ * carries them as `answers`, so the two can never word an answer differently.
+ */
 export function submissionLines(args: {
   steps: Doc<"steps">[];
   fields: Doc<"fields">[];
   data: Record<string, string>;
   files: { key: string; name: string; size: number }[];
-}): { key: string; label: string; value: string }[] {
-  const rows: { key: string; label: string; value: string }[] = [];
+  /** `false` names files without their size — for a machine, not a reader. */
+  fileSizes?: boolean;
+}): SubmissionLine[] {
+  const rows: SubmissionLine[] = [];
   for (const field of orderedFields(args.steps, args.fields)) {
-    const value = readableValue(field, args.data[field.key], args.files);
+    const value = readableValue(
+      field,
+      args.data[field.key],
+      args.files,
+      args.fileSizes ?? true,
+    );
     // Unanswered fields are left out: branches nobody took would otherwise
     // pad the message with rows of dashes.
     if (value === null) continue;
-    rows.push({ key: field.key, label: field.label, value });
+    rows.push({ key: field.key, label: field.label, type: field.type, value });
   }
   return rows;
 }

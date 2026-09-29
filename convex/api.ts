@@ -1,9 +1,12 @@
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, QueryCtx } from "./_generated/server";
 import { buildFormSchema, submitToForm } from "./publicForms";
-import { isPrefillable, serialisePrefillField } from "./lib/prefill";
-import { submissionViewUrl } from "./lib/submissionText";
+import { webhookEvent } from "./schema";
+import { deleteWebhook, insertWebhook, webhookUrlProblem } from "./webhooks";
+import { randomToken } from "./lib/crypto";
+import { prefillableFields } from "./lib/prefill";
+import { appBaseUrl, submissionViewUrl } from "./lib/submissionText";
 import { MULTI_TYPES, STATIC_TYPES, parseList } from "./lib/validate";
 
 /**
@@ -64,6 +67,70 @@ export const workspaceFormsBySlug = internalQuery({
   },
 });
 
+/** A form's fields and steps: what `prefillableFields` is worked out from. */
+async function loadFormLayout(ctx: QueryCtx, formId: Id<"forms">) {
+  const fields = await ctx.db
+    .query("fields")
+    .withIndex("by_form", (q) => q.eq("formId", formId))
+    .take(300);
+  const steps = await ctx.db
+    .query("steps")
+    .withIndex("by_form_and_order", (q) => q.eq("formId", formId))
+    .take(50);
+  return { fields, steps };
+}
+
+/** The workspace an API key belongs to, for `GET /api/v1/me`. */
+export const workspaceForApi = internalQuery({
+  args: { workspaceId: v.id("workspaces") },
+  handler: async (ctx, args) => {
+    const workspace = await ctx.db.get("workspaces", args.workspaceId);
+    if (!workspace || workspace.archived) return null;
+    return { id: workspace._id, name: workspace.name, slug: workspace.slug };
+  },
+});
+
+/**
+ * Every published form in the key's workspace, each with the keys a link to it
+ * may fill in — so an integration can offer the right form and prefill it
+ * without a second round trip per form.
+ *
+ * Unlike the public directory this ignores `publicDirectory`: that switch is
+ * about strangers browsing, and a key already belongs to the workspace.
+ */
+export const formsForApi = internalQuery({
+  args: { workspaceId: v.id("workspaces") },
+  handler: async (ctx, args) => {
+    const workspace = await ctx.db.get("workspaces", args.workspaceId);
+    if (!workspace || workspace.archived) return null;
+    const forms = await ctx.db
+      .query("forms")
+      .withIndex("by_workspace_and_status", (q) =>
+        q.eq("workspaceId", workspace._id).eq("status", "published"),
+      )
+      .take(100);
+
+    return await Promise.all(
+      forms.map(async (form) => {
+        const { fields, steps } = await loadFormLayout(ctx, form._id);
+        const group = form.groupId
+          ? await ctx.db.get("formGroups", form.groupId)
+          : null;
+        return {
+          id: form._id,
+          title: form.title,
+          slug: form.slug,
+          description: form.description ?? null,
+          url: appBaseUrl() + "/f/" + workspace.slug + "/" + form.slug,
+          group: group ? { name: group.name, slug: group.slug } : null,
+          // The same list the link endpoint returns as `prefill.accepts`.
+          prefill: prefillableFields(steps, fields),
+        };
+      }),
+    );
+  },
+});
+
 /**
  * Everything needed to build a prefilled link to one form: where it lives, and
  * which of its fields a link may fill in.
@@ -84,15 +151,7 @@ export const formLinkForApi = internalQuery({
       .unique();
     if (!form) return null;
 
-    const fields = await ctx.db
-      .query("fields")
-      .withIndex("by_form", (q) => q.eq("formId", form._id))
-      .take(300);
-    const steps = await ctx.db
-      .query("steps")
-      .withIndex("by_form_and_order", (q) => q.eq("formId", form._id))
-      .take(50);
-    const stepOrder = new Map(steps.map((s) => [s._id, s.order]));
+    const { fields, steps } = await loadFormLayout(ctx, form._id);
 
     return {
       workspace: { name: workspace.name, slug: workspace.slug },
@@ -102,17 +161,10 @@ export const formLinkForApi = internalQuery({
         slug: form.slug,
         status: form.status,
       },
-      fields: fields
-        .filter((f) => isPrefillable(f.type))
-        .sort((a, b) => {
-          const sa = stepOrder.get(a.stepId) ?? 0;
-          const sb = stepOrder.get(b.stepId) ?? 0;
-          return sa === sb ? a.order - b.order : sa - sb;
-        })
-        .map(serialisePrefillField),
+      fields: prefillableFields(steps, fields),
       /** Named so a caller knows why a `file` field is missing above. */
       notPrefillable: fields
-        .filter((f) => !isPrefillable(f.type) && f.type === "file")
+        .filter((f) => f.type === "file")
         .map((f) => f.key),
     };
   },
@@ -142,22 +194,19 @@ export const groupLinkForApi = internalQuery({
         .filter((form) => form.status === "published")
         .sort((a, b) => a.title.localeCompare(b.title))
         .map(async (form) => {
-          const fields = await ctx.db
-            .query("fields")
-            .withIndex("by_form", (q) => q.eq("formId", form._id))
-            .take(300);
+          const { fields, steps } = await loadFormLayout(ctx, form._id);
           return {
             title: form.title,
             slug: form.slug,
-            fields: fields
-              .filter((f) => isPrefillable(f.type))
-              .map(serialisePrefillField),
+            fields: prefillableFields(steps, fields),
           };
         }),
     );
 
     return {
       workspace: { name: workspace.name, slug: workspace.slug },
+      /** For minting a `formLinks` row; not part of any response. */
+      groupId: group._id,
       group: {
         name: group.name,
         slug: group.slug,
@@ -165,6 +214,118 @@ export const groupLinkForApi = internalQuery({
       },
       forms: rows,
     };
+  },
+});
+
+/**
+ * Mints the token behind a link built with a `ref`. The token is all the URL
+ * carries; the ref waits here until a submission through the link claims it.
+ */
+export const createFormLink = internalMutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    formId: v.optional(v.id("forms")),
+    groupId: v.optional(v.id("formGroups")),
+    externalRef: v.string(),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    const token = randomToken(24);
+    await ctx.db.insert("formLinks", {
+      token,
+      workspaceId: args.workspaceId,
+      formId: args.formId,
+      groupId: args.groupId,
+      externalRef: args.externalRef,
+      createdAt: Date.now(),
+    });
+    return token;
+  },
+});
+
+const apiWebhook = v.object({
+  id: v.id("webhooks"),
+  name: v.string(),
+  url: v.string(),
+  events: v.array(webhookEvent),
+  formId: v.union(v.id("forms"), v.null()),
+  secret: v.string(),
+});
+
+/**
+ * `POST /api/v1/webhooks`: the same row the dashboard makes, in the key's own
+ * workspace. Problems come back as a status and message rather than a thrown
+ * error, so the endpoint can answer 400 or 404 instead of 500.
+ */
+export const createWebhookForApi = internalMutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    name: v.optional(v.string()),
+    url: v.string(),
+    events: v.array(webhookEvent),
+    /** Unchecked text off the request; resolved against this workspace here. */
+    formId: v.optional(v.string()),
+  },
+  returns: v.union(
+    v.object({ ok: v.literal(true), webhook: apiWebhook }),
+    v.object({ ok: v.literal(false), status: v.number(), error: v.string() }),
+  ),
+  handler: async (ctx, args) => {
+    const problem = webhookUrlProblem(args.url);
+    if (problem) return { ok: false as const, status: 400, error: problem };
+    if (args.events.length === 0) {
+      return {
+        ok: false as const,
+        status: 400,
+        error: "Pick at least one event to listen for.",
+      };
+    }
+
+    let formId: Id<"forms"> | undefined;
+    if (args.formId !== undefined) {
+      const id = ctx.db.normalizeId("forms", args.formId);
+      const form = id ? await ctx.db.get("forms", id) : null;
+      if (!form || form.workspaceId !== args.workspaceId) {
+        return {
+          ok: false as const,
+          status: 404,
+          error: "Form not found in this workspace.",
+        };
+      }
+      formId = form._id;
+    }
+
+    const hook = await insertWebhook(ctx, {
+      workspaceId: args.workspaceId,
+      name: args.name?.trim() || "API webhook",
+      url: args.url,
+      events: args.events,
+      formId,
+    });
+    return {
+      ok: true as const,
+      webhook: {
+        id: hook._id,
+        name: hook.name,
+        url: hook.url,
+        events: hook.events,
+        formId: hook.formId ?? null,
+        secret: hook.secret,
+      },
+    };
+  },
+});
+
+/** `DELETE /api/v1/webhooks/{id}`. `false` when the id is not this workspace's. */
+export const removeWebhookForApi = internalMutation({
+  args: { workspaceId: v.id("workspaces"), webhookId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("webhooks", args.webhookId);
+    const hook = id ? await ctx.db.get("webhooks", id) : null;
+    if (!hook || hook.workspaceId !== args.workspaceId) return false;
+    await deleteWebhook(ctx, hook._id);
+    return true;
   },
 });
 
@@ -282,6 +443,8 @@ export const submissionsForApi = internalQuery({
           viewUrl: submission.viewToken
             ? submissionViewUrl(submission.viewToken)
             : null,
+          /** The `ref` of the API-built link it came through, if any. */
+          externalRef: submission.externalRef ?? null,
         };
       }),
     );
