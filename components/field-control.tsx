@@ -56,6 +56,24 @@ export type FieldDef = {
   condition?: VisibilityCondition | null;
 };
 
+/**
+ * Date values are stored as "YYYY-MM-DD" calendar dates. Both directions go
+ * through local time: `new Date("YYYY-MM-DD")` parses as UTC and
+ * `toISOString()` converts to UTC, either of which shifts the day by one
+ * outside UTC.
+ */
+function parseLocalDate(value: string): Date | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return undefined;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function formatLocalDate(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 export const STATIC_FIELD_TYPES = ["heading", "paragraph", "divider"];
 export const LIST_FIELD_TYPES = ["multiselect", "checkboxGroup"];
 
@@ -375,8 +393,7 @@ export function FieldControl({
           }
 
           case "date": {
-            const parsed = value ? new Date(value) : undefined;
-            const valid = parsed && !Number.isNaN(parsed.getTime()) ? parsed : undefined;
+            const valid = value ? parseLocalDate(value) : undefined;
             return (
               <Popover>
                 <PopoverTrigger
@@ -401,7 +418,7 @@ export function FieldControl({
                     autoFocus
                     selected={valid}
                     onSelect={(next) =>
-                      onChange(next ? next.toISOString().slice(0, 10) : "")
+                      onChange(next ? formatLocalDate(next) : "")
                     }
                   />
                 </PopoverContent>
